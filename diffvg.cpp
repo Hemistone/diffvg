@@ -1,3 +1,4 @@
+#define DIFFVG_NO_CUDA_RUNTIME_INCLUDES 1
 #include "diffvg.h"
 #include "aabb.h"
 #include "shape.h"

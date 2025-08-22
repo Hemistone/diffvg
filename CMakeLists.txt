@@ -1,43 +1,95 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.23)
 
-project(diffvg VERSION 0.0.1 DESCRIPTION "Differentiable Vector Graphics")
+project(diffvg VERSION 0.2.0 DESCRIPTION "Differentiable Vector Graphics")
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(WIN32)
-    find_package(Python 3.6 COMPONENTS Development REQUIRED)
-else()
-    find_package(Python 3.7 COMPONENTS Development REQUIRED)
-endif()
-add_subdirectory(pybind11)
-
+# Build options first (used below)
+# Make CUDA optional and default to ON for source installs
 option(DIFFVG_CUDA "Build diffvg with GPU code path?" ON)
 
+# Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+# Prefer system pybind11, fall back to vendored copy
+find_package(pybind11 CONFIG QUIET)
+if(NOT pybind11_FOUND)
+    # Allow older pybind11 CMake to run with modern CMake via policy minimum
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    add_subdirectory(pybind11)
+endif()
+
 if(DIFFVG_CUDA)
-    message(STATUS "Build with CUDA support")
-    find_package(CUDA 10 REQUIRED)
-    set(CMAKE_CUDA_STANDARD 11)
-    if(NOT WIN32)
-        # Hack: for some reason the line above doesn't work on some Linux systems.
-        set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -std=c++11")
-        #set(CUDA_NVCC_FLAGS_DEBUG "-g -G")
+    # Try to detect CUDA compiler/toolkit first; gracefully fall back if absent
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(NOT CMAKE_CUDA_COMPILER)
+        message(WARNING "CUDA compiler not found. Building without CUDA support.")
+        set(DIFFVG_CUDA OFF)
+    else()
+        message(STATUS "Build with CUDA support")
+        enable_language(CUDA)
+        # Prefer native CMake CUDA; require toolkit for cudart linkage
+        find_package(CUDAToolkit QUIET)
+        if(NOT CUDAToolkit_FOUND)
+            message(WARNING "CUDAToolkit not found. Building without CUDA support.")
+            set(DIFFVG_CUDA OFF)
+        else()
+            set(CMAKE_CUDA_STANDARD 14)
+            set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+            # Determine CUDA architectures robustly
+            # Priority: CMAKE_CUDA_ARCHITECTURES (user) > TORCH_CUDA_ARCH_LIST env > DIFFVG_CUDA_ARCHS env > default
+            if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+                set(_ENV_ARCH_LIST "")
+                if(DEFINED ENV{TORCH_CUDA_ARCH_LIST})
+                    set(_ENV_ARCH_LIST "$ENV{TORCH_CUDA_ARCH_LIST}")
+                elseif(DEFINED ENV{DIFFVG_CUDA_ARCHS})
+                    set(_ENV_ARCH_LIST "$ENV{DIFFVG_CUDA_ARCHS}")
+                endif()
+                if(NOT _ENV_ARCH_LIST STREQUAL "")
+                    string(REPLACE "," ";" _ENV_ARCH_LIST "${_ENV_ARCH_LIST}")
+                    string(REPLACE " " ";" _ENV_ARCH_LIST "${_ENV_ARCH_LIST}")
+                    set(_ARCH_LIST "")
+                    foreach(a IN LISTS _ENV_ARCH_LIST)
+                        string(REGEX REPLACE "^sm_" "" a "${a}")
+                        string(REGEX REPLACE "^compute_" "" a "${a}")
+                        list(APPEND _ARCH_LIST "${a}")
+                    endforeach()
+                    set(CMAKE_CUDA_ARCHITECTURES "${_ARCH_LIST}" CACHE STRING "CUDA architectures" FORCE)
+                else()
+                    # Default to Ada (RTX 40-series) if not specified
+                    set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures" FORCE)
+                endif()
+            endif()
+            # Safety override: CUDA 12+ has issues with very old arch (e.g., 52). Avoid < 70 by default.
+            if(DEFINED CUDAToolkit_VERSION AND CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.0)
+                set(_NEED_OVERRIDE FALSE)
+                foreach(a IN LISTS CMAKE_CUDA_ARCHITECTURES)
+                    if(a LESS 70)
+                        set(_NEED_OVERRIDE TRUE)
+                    endif()
+                endforeach()
+                if(_NEED_OVERRIDE)
+                    message(WARNING "Overriding unsupported/legacy GPU arch list '${CMAKE_CUDA_ARCHITECTURES}' for CUDA ${CUDAToolkit_VERSION}. Using 89. Set -DCMAKE_CUDA_ARCHITECTURES=75;86;89 to customize.")
+                    set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures" FORCE)
+                endif()
+            endif()
+        endif()
     endif()
 else()
     message(STATUS "Build without CUDA support")
-    find_package(Thrust REQUIRED)
+    # Use vendored Thrust headers (header-only)
 endif()
 
 # include_directories(${CMAKE_SOURCE_DIR}/pybind11/include)
-include_directories(${PYTHON_INCLUDE_PATH})
-find_package(PythonLibs REQUIRED)
-include_directories(${PYTHON_INCLUDE_PATH})
-include_directories(${PYTHON_INCLUDE_DIRS})
-include_directories(pybind11/include)
+include_directories(${Python_INCLUDE_DIRS})
 if(DIFFVG_CUDA)
-    link_directories(${CUDA_LIBRARIES})
+    # CUDAToolkit::cudart will be linked below
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>)
 else()
-    include_directories(${THRUST_INCLUDE_DIR})
+    include_directories(${CMAKE_SOURCE_DIR}/thrust)
 endif()
 
 if(NOT MSVC)
@@ -77,17 +129,22 @@ set(SRCS atomic.h
          scene.cpp
          shape.cpp)
 
+add_library(diffvg MODULE ${SRCS})
 if(DIFFVG_CUDA)
-    add_compile_definitions(COMPILE_WITH_CUDA)
+    target_compile_definitions(diffvg PRIVATE COMPILE_WITH_CUDA)
+    # Compile select sources with CUDA language to enable device code
     set_source_files_properties(
         diffvg.cpp
         scene.cpp
-        PROPERTIES CUDA_SOURCE_PROPERTY_FORMAT OBJ)
-
-    cuda_add_library(diffvg MODULE ${SRCS})
-else()
-    add_library(diffvg MODULE ${SRCS})
+        PROPERTIES LANGUAGE CUDA)
+    # Work around GCC 13 ICE in cfgcleanup on scene.cpp by lowering host opt
+    # See error: internal compiler error: in try_forward_edges, at cfgcleanup.cc
+    set_source_files_properties(scene.cpp PROPERTIES 
+        COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-O2;-O2>")
 endif()
+
+# (No GCC-version specific per-file optimization workarounds for C++ build)
+
 
 if(APPLE)
     # The "-undefined dynamic_lookup" is a hack for systems with
@@ -101,7 +158,11 @@ if(APPLE)
     set(DYNAMIC_LOOKUP "-undefined dynamic_lookup")
 endif()
 
-target_link_libraries(diffvg ${DYNAMIC_LOOKUP})
+target_link_libraries(diffvg ${DYNAMIC_LOOKUP} pybind11::module)
+if(DIFFVG_CUDA)
+    # Link against shared cudart to avoid duplication with PyTorch CUDA runtime
+    target_link_libraries(diffvg CUDA::cudart)
+endif()
 
 if(WIN32)
     # See: https://pybind11.readthedocs.io/en/master/compiling.html#advanced-interface-library-target
@@ -118,7 +179,7 @@ elseif(APPLE)
     set_target_properties(diffvg PROPERTIES INSTALL_RPATH "@loader_path")
 endif()
 
-set_property(TARGET diffvg PROPERTY CXX_STANDARD 11)
+set_property(TARGET diffvg PROPERTY CXX_STANDARD 14)
 set_target_properties(diffvg PROPERTIES PREFIX "")
 # Still enable assertion in release mode
 string( REPLACE "/DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
@@ -138,3 +199,8 @@ if(NOT WIN32)
         message(INFO " Building without TensorFlow support (not found)")
     endif()
 endif()
+
+# Install the extension module into the top-level of the wheel/site-packages
+install(TARGETS diffvg
+        LIBRARY DESTINATION .
+        RUNTIME DESTINATION .)

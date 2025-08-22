@@ -1,6 +1,9 @@
 #pragma once
 
-#ifdef __CUDACC__
+// CUDA runtime headers can trigger toolchain issues in some units (e.g.,
+// NVCC 12.8 with certain includes). Allow opting out per-translation-unit by
+// defining DIFFVG_NO_CUDA_RUNTIME_INCLUDES before including this header.
+#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
     #include <cuda.h>
     #include <cuda_runtime.h>
 #endif
@@ -8,11 +11,16 @@
 #include <cassert>
 #include <limits>
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
 #define checkCuda(x) do { if((x)!=cudaSuccess) { \
     printf("CUDA Runtime Error: %s at %s:%d\n",\
     cudaGetErrorString(x),__FILE__,__LINE__);\
     exit(1);}} while(0)
+#else
+// Fallback no-op checker when CUDA runtime is not included in this TU
+#ifndef checkCuda
+#define checkCuda(x) do { auto _diffvg_cuda_result = (x); (void)_diffvg_cuda_result; } while(0)
+#endif
 #endif
 
 template <typename T>
@@ -47,7 +55,7 @@ inline float infinity() {
 }
 
 inline void cuda_synchronize() {
-#ifdef __CUDACC__
+#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
     checkCuda(cudaDeviceSynchronize());
 #endif
 }

@@ -16,58 +16,34 @@ diffvg is a differentiable rasterizer for 2D vector graphics. See the webpage fo
 ![circle_outline](https://user-images.githubusercontent.com/951021/65125594-84f7a280-d9aa-11e9-8bc4-669fd2eff2f4.gif)
 ![ellipse_transform](https://user-images.githubusercontent.com/951021/67149013-06b54700-f25b-11e9-91eb-a61171c6d4a4.gif)
 
-# Install
-```
-git submodule update --init --recursive
-conda install -y pytorch torchvision -c pytorch
-conda install -y numpy
-conda install -y scikit-image
-conda install -y -c anaconda cmake
-conda install -y -c conda-forge ffmpeg
-pip install svgwrite
-pip install svgpathtools
-pip install cssutils
-pip install numba
-pip install torch-tools
-pip install visdom
-python setup.py install
-```
-# Install using poetry
+## Install
+We use a PEP 517 build with CMake (scikit-build-core). Poetry is deprecated.
 
-## prerequisite
-install python 3.7, poetry and ffmpeg
+Important: activate the Python environment you intend to use before running any `pip`/`uv` commands to avoid mixing environments.
 
-```
-# install poetry (mac, linux)
-curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
+- Create and activate a venv:
+  - `python3 -m venv .venv && source .venv/bin/activate`
+  - `python -m pip install -U pip setuptools wheel`
+  - `git submodule update --init --recursive`
 
-# install ffmpeg
+### A) Install into venv (recommended)
+- CUDA (default): `pip install .`
+- CPU-only: `CMAKE_ARGS="-DDIFFVG_CUDA=0" pip install .` or `DIFFVG_CUDA=0 pip install .`
 
-(macos)
-brew install ffmpeg
+Notes
+- CUDA Toolkit 12.x+ must be installed and `nvcc` available for the CUDA build.
+- GPU architectures: defaults to `89`. Set explicitly with `CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=75;86;89"`.
+- You can also set `TORCH_CUDA_ARCH_LIST` or `DIFFVG_CUDA_ARCHS` (e.g. `80;86`).
 
-(linux)
-sudo apt install ffmpeg
+### B) Build wheels (for distribution)
+- CPU wheel: `python -m pip install build && python -m build`
+- CUDA wheel: `CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=75;86;89" python -m build`
 
-or use conda
-conda install -y -c conda-forge ffmpeg
-```
+uv users
+- Ensure uv targets the active venv (e.g. `uv pip install --python $(which python) .`).
 
-## Install python packages
-
-```
-# install all python dependencies
-poetry install
-
-# install pydiffvg
-poetry run python setup.py install
-```
-
-Now to run the apps, just add `poetry run` before each of the commands below, e.g.
-
-```
-poetry run python single_circle.py
-```
+Compatibility
+- With CUDA 12+, very old GPU targets (e.g., 5.2) are avoided by default to prevent nvcc crashes. Override arches if needed: `-DCMAKE_CUDA_ARCHITECTURES=75;86;89`.
 
 # Building in debug mode
 

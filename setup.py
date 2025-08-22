@@ -90,7 +90,7 @@ if 'DIFFVG_CUDA' in os.environ:
     build_with_cuda = os.environ['DIFFVG_CUDA'] == '1'
 
 setup(name = 'diffvg',
-      version = '0.0.1',
+      version = '0.2.0',
       install_requires = ["svgpathtools"],
       description = 'Differentiable Vector Graphics',
       ext_modules = [CMakeExtension('diffvg', '', build_with_cuda)],
