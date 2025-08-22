@@ -1,9 +1,11 @@
 #pragma once
 
-// CUDA runtime headers can trigger toolchain issues in some units (e.g.,
-// NVCC 12.8 with certain includes). Allow opting out per-translation-unit by
-// defining DIFFVG_NO_CUDA_RUNTIME_INCLUDES before including this header.
-#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
+// CUDA runtime headers are needed for host TUs that call CUDA runtime APIs
+// even if they are not compiled with NVCC. We key this off COMPILE_WITH_CUDA
+// which CMake defines for GPU builds of diffvg.
+// You can still opt out per-translation-unit by defining
+// DIFFVG_NO_CUDA_RUNTIME_INCLUDES before including this header.
+#if defined(COMPILE_WITH_CUDA) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
     #include <cuda.h>
     #include <cuda_runtime.h>
 #endif
@@ -11,7 +13,7 @@
 #include <cassert>
 #include <limits>
 
-#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
+#if defined(COMPILE_WITH_CUDA) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
 #define checkCuda(x) do { if((x)!=cudaSuccess) { \
     printf("CUDA Runtime Error: %s at %s:%d\n",\
     cudaGetErrorString(x),__FILE__,__LINE__);\
@@ -55,7 +57,7 @@ inline float infinity() {
 }
 
 inline void cuda_synchronize() {
-#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
+#if defined(COMPILE_WITH_CUDA) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
     checkCuda(cudaDeviceSynchronize());
 #endif
 }

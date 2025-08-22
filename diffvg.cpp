@@ -1,4 +1,3 @@
-#define DIFFVG_NO_CUDA_RUNTIME_INCLUDES 1
 #include "diffvg.h"
 #include "aabb.h"
 #include "shape.h"
@@ -1491,7 +1490,7 @@ void render(std::shared_ptr<Scene> scene,
             bool use_prefiltering,
             ptr<float> eval_positions,
             int num_eval_positions) {
-#ifdef __NVCC__
+#ifdef COMPILE_WITH_CUDA
     int old_device_id = -1;
     if (scene->use_gpu) {
         checkCuda(cudaGetDevice(&old_device_id));
@@ -1505,7 +1504,7 @@ void render(std::shared_ptr<Scene> scene,
     float *weight_image = nullptr;
     // Allocate and zero the weight image
     if (scene->use_gpu) {
-#ifdef __CUDACC__
+#ifdef COMPILE_WITH_CUDA
         if (eval_positions.get() == nullptr) {
             checkCuda(cudaMallocManaged(&weight_image, width * height * sizeof(float)));
             cudaMemset(weight_image, 0, width * height * sizeof(float));

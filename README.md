@@ -36,14 +36,47 @@ Notes
 - You can also set `TORCH_CUDA_ARCH_LIST` or `DIFFVG_CUDA_ARCHS` (e.g. `80;86`).
 
 ### B) Build wheels (for distribution)
-- CPU wheel: `python -m pip install build && python -m build`
-- CUDA wheel: `CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=75;86;89" python -m build`
+
+두 가지 방법이 있습니다. 둘 다 결과 휠이 `dist/` 폴더에 생성됩니다.
+
+1) `python -m build` 사용 (간단)
+
+```
+python -m pip install build
+# (선택) 컴파일러 및 CUDA 지정
+export CC=gcc-12 CXX=g++-12
+export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
+export CMAKE_ARGS="-DDIFFVG_CUDA=ON -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-12 -DCMAKE_CUDA_ARCHITECTURES=89"
+
+# dist/ 에 휠 생성
+python -m build --wheel
+```
+
+2) `pip wheel` 사용 (정확: 의존성 휠 생성 방지)
+
+주의: `pip wheel .` 만 실행하면 의존성 패키지들까지 모두 휠로 빌드되어 현재 폴더에 떨어집니다. diffvg 휠만 만들고 `dist/`에 저장하려면 아래처럼 사용하세요.
+
+```
+# (선택) 컴파일러 및 CUDA 지정
+export CC=gcc-12 CXX=g++-12
+export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
+export CMAKE_ARGS="-DDIFFVG_CUDA=ON -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-12 -DCMAKE_CUDA_ARCHITECTURES=89"
+
+# diffvg 휠만 빌드해서 dist/ 로 저장
+python -m pip wheel . --no-deps -w dist
+```
 
 uv users
 - Ensure uv targets the active venv (e.g. `uv pip install --python $(which python) .`).
 
 Compatibility
 - With CUDA 12+, very old GPU targets (e.g., 5.2) are avoided by default to prevent nvcc crashes. Override arches if needed: `-DCMAKE_CUDA_ARCHITECTURES=75;86;89`.
+
+### Troubleshooting CUDA builds
+- NVCC의 호스트 컴파일러와 불일치가 있으면 다음처럼 고정하세요:
+  `CMAKE_ARGS="-DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-12"`
+- Ada (RTX 40) 계열은 `-DCMAKE_CUDA_ARCHITECTURES=89` 권장.
+- `pip wheel .` 실행 시 의존성까지 휠이 생성되면 `--no-deps -w dist` 옵션을 추가하세요 (위 예시 참고).
 
 # Building in debug mode
 

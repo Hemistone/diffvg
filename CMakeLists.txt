@@ -31,6 +31,10 @@ if(DIFFVG_CUDA)
     else()
         message(STATUS "Build with CUDA support")
         enable_language(CUDA)
+        # Ensure NVCC uses the same host compiler as C++ (avoids GCC mismatches)
+        if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER OR CMAKE_CUDA_HOST_COMPILER STREQUAL "")
+            set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH "Host compiler for NVCC" FORCE)
+        endif()
         # Prefer native CMake CUDA; require toolkit for cudart linkage
         find_package(CUDAToolkit QUIET)
         if(NOT CUDAToolkit_FOUND)
@@ -94,7 +98,7 @@ endif()
 
 if(NOT MSVC)
   # These compile definitions are not meaningful for MSVC
-  add_compile_options(-Wall -g -O3 -fvisibility=hidden -Wno-unknown-pragmas)
+  # Host opts will be applied per-target below to avoid leaking into CUDA.
 else()
   add_compile_options(/Wall /Zi)
   add_link_options(/DEBUG)
@@ -130,17 +134,29 @@ set(SRCS atomic.h
          shape.cpp)
 
 add_library(diffvg MODULE ${SRCS})
+if(NOT MSVC)
+    target_compile_options(diffvg PRIVATE 
+        $<$<COMPILE_LANGUAGE:C>:-Wall;-g;-O3;-fvisibility=hidden;-Wno-unknown-pragmas>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall;-g;-O3;-fvisibility=hidden;-Wno-unknown-pragmas>)
+endif()
 if(DIFFVG_CUDA)
     target_compile_definitions(diffvg PRIVATE COMPILE_WITH_CUDA)
     # Compile select sources with CUDA language to enable device code
     set_source_files_properties(
-        diffvg.cpp
         scene.cpp
         PROPERTIES LANGUAGE CUDA)
-    # Work around GCC 13 ICE in cfgcleanup on scene.cpp by lowering host opt
-    # See error: internal compiler error: in try_forward_edges, at cfgcleanup.cc
+    # Mitigate NVCC/GCC ICE on scene.cpp by reducing optimization levels
     set_source_files_properties(scene.cpp PROPERTIES 
-        COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-O2;-O2>")
+        COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:-O1;-Xcompiler=-O2>")
+    # Build diffvg.cpp as host C++ and force Thrust to use the CPP backend in this TU
+    set_source_files_properties(diffvg.cpp PROPERTIES 
+        COMPILE_DEFINITIONS "THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP")
+    # Mitigate GCC ICE on diffvg.cpp by reducing optimization levels
+    set_source_files_properties(diffvg.cpp PROPERTIES
+        COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CXX>:-O2>")
+    # NVCC internal errors can occur at high optimization on large TUs.
+    # Lower device optimization for diffvg.cpp specifically and reduce PTX opt.
+    # No special CUDA opts for diffvg.cpp since it is compiled as host C++.
 endif()
 
 # (No GCC-version specific per-file optimization workarounds for C++ build)
