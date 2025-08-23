@@ -22,7 +22,6 @@ if(NOT pybind11_FOUND)
 endif()
 
 if(DIFFVG_CUDA)
-    # Try to detect CUDA compiler/toolkit first; gracefully fall back if absent
     include(CheckLanguage)
     check_language(CUDA)
     if(NOT CMAKE_CUDA_COMPILER)
@@ -80,16 +79,43 @@ if(DIFFVG_CUDA)
     endif()
 else()
     message(STATUS "Build without CUDA support")
-    # Use vendored Thrust headers (header-only)
+    # Use Thrust headers from CUDA Toolkit (preferred) or system install
 endif()
 
 # include_directories(${CMAKE_SOURCE_DIR}/pybind11/include)
 include_directories(${Python_INCLUDE_DIRS})
+
+# Use CCCL/Thrust from the CUDA Toolkit when available; this applies to both
+# CPU and CUDA builds (headers are usable on host-only). As a fallback for
+# CPU-only builds without the Toolkit, try to locate a system-installed Thrust.
+# No vendored submodule is required.
+if(NOT CUDAToolkit_FOUND)
+    find_package(CUDAToolkit QUIET)
+endif()
+
+set(_DIFFVG_ADDED_THRUST_INCLUDE FALSE)
+if(CUDAToolkit_FOUND)
+    message(STATUS "Using Thrust/CCCL from CUDA Toolkit at: ${CUDAToolkit_INCLUDE_DIRS}")
+    include_directories(${CUDAToolkit_INCLUDE_DIRS})
+    set(_DIFFVG_ADDED_THRUST_INCLUDE TRUE)
+endif()
+
+if(NOT _DIFFVG_ADDED_THRUST_INCLUDE)
+    find_package(Thrust QUIET)
+    if(THRUST_FOUND)
+        message(STATUS "Using system Thrust at: ${THRUST_INCLUDE_DIR}")
+        include_directories(${THRUST_INCLUDE_DIR})
+        set(_DIFFVG_ADDED_THRUST_INCLUDE TRUE)
+    endif()
+endif()
+
+if(NOT _DIFFVG_ADDED_THRUST_INCLUDE AND NOT DIFFVG_CUDA)
+    message(FATAL_ERROR "No Thrust/CCCL headers found. Install CUDA Toolkit (preferred) or provide a system Thrust install.")
+endif()
+
 if(DIFFVG_CUDA)
     # CUDAToolkit::cudart will be linked below
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>)
-else()
-    include_directories(${CMAKE_SOURCE_DIR}/thrust)
 endif()
 
 if(NOT MSVC)

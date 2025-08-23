@@ -25,6 +25,7 @@ Important: activate the Python environment you intend to use before running any 
   - `python3 -m venv .venv && source .venv/bin/activate`
   - `python -m pip install -U pip setuptools wheel`
   - `git submodule update --init --recursive`
+    - Note: You do not need a Thrust/CCCL submodule. We use the CUDA Toolkit's CCCL (preferred) or a system-installed Thrust if present.
 
 ### A) Install into venv (recommended)
 - CUDA (default): `pip install .`
@@ -32,6 +33,7 @@ Important: activate the Python environment you intend to use before running any 
 
 Notes
 - CUDA Toolkit 12.x+ must be installed and `nvcc` available for the CUDA build.
+- We source Thrust/CCCL headers from the CUDA Toolkit for both CPU and CUDA builds when available. For CPU-only builds without the Toolkit, install a system Thrust and ensure its include path is visible to CMake.
 - GPU architectures: defaults to `89`. Set explicitly with `CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=75;86;89"`.
 - You can also set `TORCH_CUDA_ARCH_LIST` or `DIFFVG_CUDA_ARCHS` (e.g. `80;86`).
 
