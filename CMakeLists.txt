@@ -14,6 +14,33 @@ option(DIFFVG_CUDA "Build diffvg with GPU code path?" ON)
 # Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 # Require pybind11 from system/PyPI; no vendored fallback
+# Try to detect pybind11 from the active Python venv (e.g., uv, venv, conda)
+# TODO: Update README to not support direct cmake build, or support it better
+if(NOT pybind11_DIR)
+    # Try .venv first if it exists
+    if(EXISTS "${CMAKE_SOURCE_DIR}/.venv/bin/python")
+        set(_VENV_PYTHON "${CMAKE_SOURCE_DIR}/.venv/bin/python")
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
+        set(_VENV_PYTHON "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
+    else()
+        set(_VENV_PYTHON "${Python_EXECUTABLE}")
+    endif()
+    execute_process(
+        COMMAND "${_VENV_PYTHON}" -c
+        "import pybind11, os; print(os.path.dirname(pybind11.get_cmake_dir()))"
+        RESULT_VARIABLE _PYBIND11_RESULT
+        OUTPUT_VARIABLE _PYBIND11_CMAKE_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    set(_PYBIND11_CONFIG_FILE "${_PYBIND11_CMAKE_DIR}/pybind11/pybind11Config.cmake")
+    if(_PYBIND11_RESULT EQUAL 0 AND EXISTS "${_PYBIND11_CONFIG_FILE}")
+        set(pybind11_DIR "${_PYBIND11_CMAKE_DIR}/pybind11")
+        message(STATUS "Found pybind11 CMake config: ${pybind11_DIR}")
+    elseif(_PYBIND11_RESULT EQUAL 0)
+        message(WARNING "pybind11 found in Python environment, but CMake config file not present at ${_PYBIND11_CONFIG_FILE}. Try 'pip install pybind11 --no-binary :all:' in your venv.")
+    endif()
+endif()
 find_package(pybind11 CONFIG REQUIRED)
 
 if(DIFFVG_CUDA)
@@ -59,15 +86,20 @@ if(DIFFVG_CUDA)
             endif()
             # Safety override: CUDA 12+ has issues with very old arch (e.g., 52). Avoid < 70 by default.
             if(DEFINED CUDAToolkit_VERSION AND CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.0)
-                set(_NEED_OVERRIDE FALSE)
+                set(_ARCHS_FILTERED "")
                 foreach(a IN LISTS CMAKE_CUDA_ARCHITECTURES)
-                    if(a LESS 70)
-                        set(_NEED_OVERRIDE TRUE)
+                    if(a GREATER_EQUAL 70)
+                        list(APPEND _ARCHS_FILTERED "${a}")
                     endif()
                 endforeach()
-                if(_NEED_OVERRIDE)
-                    message(WARNING "Overriding unsupported/legacy GPU arch list '${CMAKE_CUDA_ARCHITECTURES}' for CUDA ${CUDAToolkit_VERSION}. Using 89. Set -DCMAKE_CUDA_ARCHITECTURES=75;86;89 to customize.")
+                if(_ARCHS_FILTERED STREQUAL "")
+                    message(WARNING "No supported GPU arch >= 70 found in '${CMAKE_CUDA_ARCHITECTURES}' for CUDA ${CUDAToolkit_VERSION}. Using 89. Set -DCMAKE_CUDA_ARCHITECTURES=75;86;89 to customize.")
                     set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures" FORCE)
+                else()
+                    if(NOT _ARCHS_FILTERED STREQUAL "${CMAKE_CUDA_ARCHITECTURES}")
+                        message(STATUS "Filtering unsupported GPU arch < 70 from '${CMAKE_CUDA_ARCHITECTURES}' for CUDA ${CUDAToolkit_VERSION}. Using '${_ARCHS_FILTERED}'.")
+                        set(CMAKE_CUDA_ARCHITECTURES "${_ARCHS_FILTERED}" CACHE STRING "CUDA architectures" FORCE)
+                    endif()
                 endif()
             endif()
         endif()
@@ -158,14 +190,7 @@ if(DIFFVG_CUDA)
         diffvg.cpp
         scene.cpp
         PROPERTIES LANGUAGE CUDA)
-    # Work around GCC 13 ICE in cfgcleanup on scene.cpp by lowering host opt
-    # See error: internal compiler error: in try_forward_edges, at cfgcleanup.cc
-    set_source_files_properties(scene.cpp PROPERTIES 
-        COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-O2;-O2>")
 endif()
-
-# (No GCC-version specific per-file optimization workarounds for C++ build)
-
 
 if(APPLE)
     # The "-undefined dynamic_lookup" is a hack for systems with
