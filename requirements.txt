@@ -1,0 +1,56 @@
+# diffvg runtime requirements (Py3.12 compatible)
+#
+# Notes
+# - Torch GPU wheels depend on a CUDA-tagged index. See the CUDA section below.
+# - Pins are set as compatible ranges to work across Linux/macOS with Python 3.12.
+# - This file targets the library runtime. Example apps/dev extras are listed at
+#   the bottom as commented lines; uncomment as needed.
+
+# Core runtime deps (from pyproject/poetry.lock, modernized for Py3.12)
+numpy>=1.26,<3.0
+scikit-image>=0.23,<0.25
+pillow>=10,<12
+matplotlib>=3.8,<3.10
+svgpathtools>=1.6,<2.0
+cssutils>=2.9,<3.0
+
+# PyTorch (required to use pydiffvg; install matching torchvision)
+# By default, the untagged wheels are CPU-only. For GPU wheels, use the CUDA
+# index URLs below and keep torch/torchvision versions in sync.
+torch>=2.4,<2.6
+torchvision>=0.19,<0.21
+
+# --- CUDA wheels guidance (choose ONE block and place it before torch lines) ---
+# For CUDA 12.4+ wheels (recommended for CUDA 12.8 toolkits/drivers):
+# --index-url https://download.pytorch.org/whl/cu124
+# For CUDA 12.1 wheels:
+# --index-url https://download.pytorch.org/whl/cu121
+# For CPU-only wheels:
+# --index-url https://download.pytorch.org/whl/cpu
+
+# If you use uv:
+#   uv pip install -r requirements.txt
+# To override index just for torch/torchvision, you can split into two files or
+# install those first with the desired index, e.g.:
+#   uv pip install --index-url https://download.pytorch.org/whl/cu124 \
+#     'torch>=2.4,<2.6' 'torchvision>=0.19,<0.21'
+
+# ----------------------
+# Optional: example apps
+# ----------------------
+# Uncomment as needed to run scripts in apps/.
+#tqdm>=4.66
+#imageio>=2.31
+#visdom>=0.2
+#scipy>=1.11,<2.0
+#pandas>=2.0
+#seaborn>=0.13
+#requests>=2.32
+#pyzmq>=25
+#pygame>=2.5
+#ipython>=8.18
+#wget>=3.2
+#scikit-learn>=1.4
+#svgwrite>=1.4  # transitively from svgpathtools, listed here for convenience
+#torch-tools>=0.1.9  # ttools; optional helpers used in some examples
+
