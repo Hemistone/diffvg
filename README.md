@@ -17,6 +17,8 @@ diffvg is a differentiable rasterizer for 2D vector graphics. See the webpage fo
 ![ellipse_transform](https://user-images.githubusercontent.com/951021/67149013-06b54700-f25b-11e9-91eb-a61171c6d4a4.gif)
 
 ## Install
+PyTorch-only. TensorFlow support has been removed.
+
 We use a PEP 517 build with CMake (scikit-build-core). Poetry is deprecated.
 
 Important: activate the Python environment you intend to use before running any `pip`/`uv` commands to avoid mixing environments.
@@ -27,7 +29,15 @@ Important: activate the Python environment you intend to use before running any 
   - `git submodule update --init --recursive`
     - Note: You do not need a Thrust/CCCL submodule. We use the CUDA Toolkit's CCCL (preferred) or a system-installed Thrust if present.
 
-### A) Install into venv (recommended)
+### A) Install runtime dependencies
+- With uv: `uv pip install -r requirements.txt`
+- With pip: `pip install -r requirements.txt`
+
+Install PyTorch/torchvision first if you need CUDA wheels (recommended):
+- CUDA 12.4+ wheels: `uv pip install --index-url https://download.pytorch.org/whl/cu124 'torch>=2.4,<2.6' 'torchvision>=0.19,<0.21'`
+- CPU-only wheels: `uv pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.4,<2.6' 'torchvision>=0.19,<0.21'`
+
+### B) Build and install diffvg into venv (recommended)
 - CUDA (default): `pip install .`
 - CPU-only: `CMAKE_ARGS="-DDIFFVG_CUDA=0" pip install .` or `DIFFVG_CUDA=0 pip install .`
 
@@ -37,7 +47,7 @@ Notes
 - GPU architectures: defaults to `89`. Set explicitly with `CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=75;86;89"`.
 - You can also set `TORCH_CUDA_ARCH_LIST` or `DIFFVG_CUDA_ARCHS` (e.g. `80;86`).
 
-### B) Build wheels (for distribution)
+### C) Build wheels (for distribution)
 - CPU wheel: `python -m pip install build && python -m build`
 - CUDA wheel: `CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=75;86;89" python -m build`
 

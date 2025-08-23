@@ -217,14 +217,7 @@ string( REPLACE "-DNDEBUG" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}"
 string( REPLACE "/DNDEBUG" "" CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
 string( REPLACE "-DNDEBUG" "" CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
 
-if(NOT WIN32)
-    find_package(TensorFlow)
-    if(TensorFlow_FOUND)
-        add_subdirectory(pydiffvg_tensorflow/custom_ops)
-    else()
-        message(INFO " Building without TensorFlow support (not found)")
-    endif()
-endif()
+
 
 # Install the extension module into the top-level of the wheel/site-packages
 install(TARGETS diffvg

@@ -68,22 +68,14 @@ class Build(build_ext):
             super().build_extension(ext)
 
 torch_spec = importlib.util.find_spec("torch")
-tf_spec = importlib.util.find_spec("tensorflow")
-packages = []
+packages = ['pydiffvg']
 build_with_cuda = False
 if torch_spec is not None:
-    packages.append('pydiffvg')
     import torch
     if torch.cuda.is_available():
         build_with_cuda = True
-if tf_spec is not None and sys.platform != 'win32':
-    packages.append('pydiffvg_tensorflow')
-    if not build_with_cuda:
-        import tensorflow as tf
-        if tf.test.is_gpu_available(cuda_only=True, min_cuda_compute_capability=None):
-            build_with_cuda = True
-if len(packages) == 0:
-    print('Error: PyTorch or Tensorflow must be installed. For Windows platform only PyTorch is supported.')
+else:
+    print('Error: PyTorch must be installed to build diffvg.')
     exit()
 # Override build_with_cuda with environment variable
 if 'DIFFVG_CUDA' in os.environ:
