@@ -24,8 +24,8 @@ We use a PEP 517 build with CMake (scikit-build-core). Poetry is deprecated.
 Important: activate the Python environment you intend to use before running any `pip`/`uv` commands to avoid mixing environments.
 
 - System prerequisites (Debian/Ubuntu via apt)
-  - `sudo apt-get update`
-  - `sudo apt-get install -y python3 python3-venv build-essential git ninja-build cmake`
+- `sudo apt-get update`
+- `sudo apt-get install -y python3 python3-venv build-essential git ninja-build cmake`
   - Need a newer CMake? Use the Kitware APT repo:
     - `sudo apt-get install -y apt-transport-https ca-certificates gnupg lsb-release`
     - `sudo mkdir -p /etc/apt/keyrings`
@@ -41,8 +41,7 @@ Important: activate the Python environment you intend to use before running any 
 - Create and activate a venv:
   - `python3 -m venv .venv && source .venv/bin/activate`
   - `python -m pip install -U pip setuptools wheel`
-  - `git submodule update --init --recursive`
-    - Note: You do not need a Thrust/CCCL submodule. We use the CUDA Toolkit's CCCL (preferred) or a system-installed Thrust if present.
+- No submodules required. Build dependencies (pybind11, scikit-build-core) are installed automatically via build isolation.
 
 ### A) Install runtime dependencies
 - With uv: `uv pip install -r requirements.txt`
@@ -100,7 +99,7 @@ Compatibility
 - Unsupported GPU arch: If you see errors like `unsupported gpu architecture`, set `-DCMAKE_CUDA_ARCHITECTURES=75;86;89` (or a list matching your GPUs) or export `TORCH_CUDA_ARCH_LIST="75;86;89"`.
 - CPU-only Thrust include path: Without a CUDA Toolkit, provide Thrust headers or install a system Thrust and set `-DTHRUST_INCLUDE_DIR=/path/to/thrust`.
 - Build isolation quirks: If your toolchain is not discovered during isolated builds, use `pip install --no-build-isolation .` (or `uv pip install --no-build-isolation .`).
-- Submodules: If you see missing pybind headers, run `git submodule update --init --recursive`.
+- pybind11 not found: If building without isolation (e.g., `--no-build-isolation`), install it first: `pip install pybind11`.
 
 # Building in debug mode
 

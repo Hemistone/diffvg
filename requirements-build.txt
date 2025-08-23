@@ -1,0 +1,19 @@
+# Build-time tools for local source builds of diffvg
+#
+# When using `pip install .`, pip will create an isolated build env and
+# install the `[build-system]` requirements listed in `pyproject.toml`.
+# Use this file if you prefer to pre-install build tools into your active
+# environment (e.g., for `--no-build-isolation` workflows or CI images).
+
+build>=1.2
+wheel>=0.42
+scikit-build-core>=0.9
+pybind11>=2.10
+cmake>=3.25
+ninja>=1.11
+
+# Notes
+# - System toolchains are still required: a C++14 compiler, and for CUDA builds
+#   a CUDA Toolkit (12.x recommended) providing `nvcc` and CCCL/Thrust headers.
+# - `torch`/`torchvision` are runtime deps and remain in requirements.txt.
+

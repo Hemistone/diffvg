@@ -5,24 +5,26 @@
 # - Pins are set as compatible ranges to work across Linux/macOS with Python 3.12.
 # - This file targets the library runtime. Example apps/dev extras are listed at
 #   the bottom as commented lines; uncomment as needed.
+# - For build-time tools (wheel, scikit-build-core, cmake, etc.), see
+#   `requirements-build.txt` and the `[build-system]` section in `pyproject.toml`.
 
 # Core runtime deps (from pyproject/poetry.lock, modernized for Py3.12)
-numpy>=1.26,<3.0
-scikit-image>=0.23,<0.25
-pillow>=10,<12
-matplotlib>=3.8,<3.10
-svgpathtools>=1.6,<2.0
-cssutils>=2.9,<3.0
+numpy>=1.26
+scikit-image>=0.23
+pillow>=10
+matplotlib>=3.8
+svgpathtools>=1.6
+cssutils>=2.9
 
 # PyTorch (required to use pydiffvg; install matching torchvision)
 # By default, the untagged wheels are CPU-only. For GPU wheels, use the CUDA
 # index URLs below and keep torch/torchvision versions in sync.
-torch>=2.4,<2.6
-torchvision>=0.19,<0.21
+torch==2.7.1
+torchvision==0.22.1
 
 # --- CUDA wheels guidance (choose ONE block and place it before torch lines) ---
-# For CUDA 12.4+ wheels (recommended for CUDA 12.8 toolkits/drivers):
-# --index-url https://download.pytorch.org/whl/cu124
+# For CUDA 12.8 wheels:
+--index-url https://download.pytorch.org/whl/cu128
 # For CUDA 12.1 wheels:
 # --index-url https://download.pytorch.org/whl/cu121
 # For CPU-only wheels:
@@ -53,4 +55,3 @@ torchvision>=0.19,<0.21
 #scikit-learn>=1.4
 #svgwrite>=1.4  # transitively from svgpathtools, listed here for convenience
 #torch-tools>=0.1.9  # ttools; optional helpers used in some examples
-

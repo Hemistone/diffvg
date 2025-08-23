@@ -13,13 +13,8 @@ option(DIFFVG_CUDA "Build diffvg with GPU code path?" ON)
 
 # Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-# Prefer system pybind11, fall back to vendored copy
-find_package(pybind11 CONFIG QUIET)
-if(NOT pybind11_FOUND)
-    # Allow older pybind11 CMake to run with modern CMake via policy minimum
-    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-    add_subdirectory(pybind11)
-endif()
+# Require pybind11 from system/PyPI; no vendored fallback
+find_package(pybind11 CONFIG REQUIRED)
 
 if(DIFFVG_CUDA)
     include(CheckLanguage)
