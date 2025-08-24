@@ -16,26 +16,14 @@ matplotlib>=3.8
 svgpathtools>=1.6
 cssutils>=2.9
 
-# PyTorch (required to use pydiffvg; install matching torchvision)
-# By default, the untagged wheels are CPU-only. For GPU wheels, use the CUDA
-# index URLs below and keep torch/torchvision versions in sync.
+# Indices: use PyPI as default, add CUDA wheels as extra
+--index-url https://pypi.org/simple
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# PyTorch (GPU) — pins must match your CUDA choice above
 torch==2.7.1
 torchvision==0.22.1
 
-# --- CUDA wheels guidance (choose ONE block and place it before torch lines) ---
-# For CUDA 12.8 wheels:
---index-url https://download.pytorch.org/whl/cu128
-# For CUDA 12.1 wheels:
-# --index-url https://download.pytorch.org/whl/cu121
-# For CPU-only wheels:
-# --index-url https://download.pytorch.org/whl/cpu
-
-# If you use uv:
-#   uv pip install -r requirements.txt
-# To override index just for torch/torchvision, you can split into two files or
-# install those first with the desired index, e.g.:
-#   uv pip install --index-url https://download.pytorch.org/whl/cu124 \
-#     'torch>=2.4,<2.6' 'torchvision>=0.19,<0.21'
 
 # ----------------------
 # Optional: example apps

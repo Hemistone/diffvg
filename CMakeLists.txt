@@ -13,35 +13,13 @@ option(DIFFVG_CUDA "Build diffvg with GPU code path?" ON)
 
 # Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-# Require pybind11 from system/PyPI; no vendored fallback
-# Try to detect pybind11 from the active Python venv (e.g., uv, venv, conda)
-# TODO: Update README to not support direct cmake build, or support it better
-if(NOT pybind11_DIR)
-    # Try .venv first if it exists
-    if(EXISTS "${CMAKE_SOURCE_DIR}/.venv/bin/python")
-        set(_VENV_PYTHON "${CMAKE_SOURCE_DIR}/.venv/bin/python")
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
-        set(_VENV_PYTHON "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
-    else()
-        set(_VENV_PYTHON "${Python_EXECUTABLE}")
-    endif()
-    execute_process(
-        COMMAND "${_VENV_PYTHON}" -c
-        "import pybind11, os; print(os.path.dirname(pybind11.get_cmake_dir()))"
-        RESULT_VARIABLE _PYBIND11_RESULT
-        OUTPUT_VARIABLE _PYBIND11_CMAKE_DIR
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    set(_PYBIND11_CONFIG_FILE "${_PYBIND11_CMAKE_DIR}/pybind11/pybind11Config.cmake")
-    if(_PYBIND11_RESULT EQUAL 0 AND EXISTS "${_PYBIND11_CONFIG_FILE}")
-        set(pybind11_DIR "${_PYBIND11_CMAKE_DIR}/pybind11")
-        message(STATUS "Found pybind11 CMake config: ${pybind11_DIR}")
-    elseif(_PYBIND11_RESULT EQUAL 0)
-        message(WARNING "pybind11 found in Python environment, but CMake config file not present at ${_PYBIND11_CONFIG_FILE}. Try 'pip install pybind11 --no-binary :all:' in your venv.")
-    endif()
+# Prefer system pybind11, fall back to vendored copy
+find_package(pybind11 CONFIG QUIET)
+if(NOT pybind11_FOUND)
+    # Allow older pybind11 CMake to run with modern CMake via policy minimum
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    add_subdirectory(pybind11)
 endif()
-find_package(pybind11 CONFIG REQUIRED)
 
 if(DIFFVG_CUDA)
     include(CheckLanguage)

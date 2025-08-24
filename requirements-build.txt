@@ -8,7 +8,6 @@
 build>=1.2
 wheel>=0.42
 scikit-build-core>=0.9
-pybind11>=2.10
 cmake>=3.25
 ninja>=1.11
 
