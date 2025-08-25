@@ -8,11 +8,11 @@ import importlib
 from sysconfig import get_paths
 
 import importlib
+import importlib.util
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
 from setuptools.command.install import install
-from distutils.sysconfig import get_config_var
-from distutils.version import LooseVersion
+from sysconfig import get_config_var
 
 class CMakeExtension(Extension):
     def __init__(self, name, sourcedir, build_with_cuda):

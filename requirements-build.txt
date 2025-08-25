@@ -11,6 +11,9 @@ scikit-build-core>=0.9
 cmake>=3.25
 ninja>=1.11
 
+# For distutils-based builds (legacy, not recommended) since it is removed after Python 3.12
+setuptools
+
 # Notes
 # - System toolchains are still required: a C++14 compiler, and for CUDA builds
 #   a CUDA Toolkit (12.x recommended) providing `nvcc` and CCCL/Thrust headers.
