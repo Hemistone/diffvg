@@ -3,19 +3,44 @@
 // CUDA runtime headers can trigger toolchain issues in some units (e.g.,
 // NVCC 12.8 with certain includes). Allow opting out per-translation-unit by
 // defining DIFFVG_NO_CUDA_RUNTIME_INCLUDES before including this header.
-#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
+#if !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
+#ifdef __CUDACC__
     #include <cuda.h>
     #include <cuda_runtime.h>
+#elif defined(COMPILE_WITH_CUDA)
+    #include <cuda_runtime_api.h>
+#endif
+#else
+#if defined(COMPILE_WITH_CUDA)
+extern "C" {
+    typedef enum cudaError cudaError_t;
+    const char* cudaGetErrorString(cudaError_t error);
+    cudaError_t cudaDeviceSynchronize(void);
+}
+#endif
 #endif
 #include <cstdio>
+#include <cstdlib>
 #include <cassert>
 #include <limits>
 
-#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
+#if (defined(__CUDACC__) || defined(COMPILE_WITH_CUDA)) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
 #define checkCuda(x) do { if((x)!=cudaSuccess) { \
-    printf("CUDA Runtime Error: %s at %s:%d\n",\
-    cudaGetErrorString(x),__FILE__,__LINE__);\
-    exit(1);}} while(0)
+    std::fprintf(stderr, "CUDA Runtime Error: %s at %s:%d\n",\
+    cudaGetErrorString(x), __FILE__, __LINE__);\
+    std::abort();}} while(0)
+#elif defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES) && defined(COMPILE_WITH_CUDA)
+inline void diffvg_check_cuda(cudaError_t result, const char *file, int line) {
+    if (result != 0) {
+        const char *msg = cudaGetErrorString(result);
+        if (msg == nullptr) {
+            msg = "Unknown CUDA error";
+        }
+        std::fprintf(stderr, "CUDA Runtime Error: %s at %s:%d\n", msg, file, line);
+        std::abort();
+    }
+}
+#define checkCuda(x) diffvg_check_cuda((x), __FILE__, __LINE__)
 #else
 // Fallback no-op checker when CUDA runtime is not included in this TU
 #ifndef checkCuda
@@ -55,7 +80,9 @@ inline float infinity() {
 }
 
 inline void cuda_synchronize() {
-#if defined(__CUDACC__) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
+#if (defined(__CUDACC__) || defined(COMPILE_WITH_CUDA)) && !defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES)
+    checkCuda(cudaDeviceSynchronize());
+#elif defined(DIFFVG_NO_CUDA_RUNTIME_INCLUDES) && defined(COMPILE_WITH_CUDA)
     checkCuda(cudaDeviceSynchronize());
 #endif
 }
