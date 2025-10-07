@@ -3,110 +3,137 @@ import torch
 import skimage
 import numpy as np
 
-# Use GPU if available
-pydiffvg.set_use_gpu(torch.cuda.is_available())
+from single_utils import create_run_context, log_run_configuration
 
-canvas_width, canvas_height = 256, 256
-ellipse = pydiffvg.Ellipse(radius = torch.tensor([60.0, 30.0]),
-                           center = torch.tensor([128.0, 128.0]))
-shapes = [ellipse]
-ellipse_group = pydiffvg.ShapeGroup(\
-    shape_ids = torch.tensor([0]),
-    fill_color = torch.tensor([0.3, 0.6, 0.3, 1.0]),
-    shape_to_canvas = torch.eye(3, 3))
-shape_groups = [ellipse_group]
-scene_args = pydiffvg.RenderFunction.serialize_scene(\
-    canvas_width, canvas_height, shapes, shape_groups)
 
-render = pydiffvg.RenderFunction.apply
-img = render(256, # width
-             256, # height
-             2,   # num_samples_x
-             2,   # num_samples_y
-             0,   # seed
-             None, # background_image
-             *scene_args)
-# The output image is in linear RGB space. Do Gamma correction before saving the image.
-pydiffvg.imwrite(img.cpu(), 'results/single_ellipse_transform/target.png', gamma=2.2)
-target = img.clone()
+def main() -> None:
+    use_gpu = torch.cuda.is_available()
+    pydiffvg.set_use_gpu(use_gpu)
 
-# Affine transform the ellipse to produce initial guess
-color = torch.tensor([0.3, 0.2, 0.8, 1.0], requires_grad=True)
-affine = torch.zeros(2, 3)
-affine[0, 0] = 1.3
-affine[0, 1] = 0.2
-affine[0, 2] = 0.1
-affine[1, 0] = 0.2
-affine[1, 1] = 0.6
-affine[1, 2] = 0.3
-affine.requires_grad = True
-shape_to_canvas = torch.cat((affine, torch.tensor([[0.0, 0.0, 1.0]])), axis=0)
-ellipse_group.fill_color = color
-ellipse_group.shape_to_canvas = shape_to_canvas
-scene_args = pydiffvg.RenderFunction.serialize_scene(\
-    canvas_width, canvas_height, shapes, shape_groups)
-img = render(256, # width
-             256, # height
-             2,   # num_samples_x
-             2,   # num_samples_y
-             1,   # seed
-             None, # background_image
-             *scene_args)
-pydiffvg.imwrite(img.cpu(), 'results/single_ellipse_transform/init.png', gamma=2.2)
+    canvas_width, canvas_height = 256, 256
+    num_samples = (2, 2)
+    num_iterations = 150
+    learning_rate = 1e-2
 
-# Optimize for radius & center
-optimizer = torch.optim.Adam([color, affine], lr=1e-2)
-# Run 150 Adam iterations.
-for t in range(150):
-    print('iteration:', t)
-    optimizer.zero_grad()
-    # Forward pass: render the image.
+    run = create_run_context("single_ellipse_transform", num_iterations, video_fps=24)
+    log_run_configuration(
+        "single_ellipse_transform",
+        {
+            "device": "cuda" if use_gpu else "cpu",
+            "canvas": f"{canvas_width}x{canvas_height}",
+            "samples": f"{num_samples[0]}x{num_samples[1]}",
+            "iterations": num_iterations,
+            "lr": learning_rate,
+        },
+    )
+
+    ellipse = pydiffvg.Ellipse(
+        radius=torch.tensor([60.0, 30.0]),
+        center=torch.tensor([128.0, 128.0]),
+    )
+    shapes = [ellipse]
+    ellipse_group = pydiffvg.ShapeGroup(
+        shape_ids=torch.tensor([0]),
+        fill_color=torch.tensor([0.3, 0.6, 0.3, 1.0]),
+        shape_to_canvas=torch.eye(3, 3),
+    )
+    shape_groups = [ellipse_group]
+    scene_args = pydiffvg.RenderFunction.serialize_scene(
+        canvas_width, canvas_height, shapes, shape_groups
+    )
+
+    render = pydiffvg.RenderFunction.apply
+    img = render(
+        canvas_width,
+        canvas_height,
+        num_samples[0],
+        num_samples[1],
+        0,
+        None,
+        *scene_args,
+    )
+    pydiffvg.imwrite(img.cpu(), str(run.results_dir / "target.png"), gamma=2.2)
+    target = img.clone()
+
+    color = torch.tensor([0.3, 0.2, 0.8, 1.0], requires_grad=True)
+    affine = torch.zeros(2, 3)
+    affine[0, 0] = 1.3
+    affine[0, 1] = 0.2
+    affine[0, 2] = 0.1
+    affine[1, 0] = 0.2
+    affine[1, 1] = 0.6
+    affine[1, 2] = 0.3
+    affine.requires_grad = True
+    shape_to_canvas = torch.cat((affine, torch.tensor([[0.0, 0.0, 1.0]])), axis=0)
     ellipse_group.fill_color = color
-    ellipse_group.shape_to_canvas = torch.cat((affine, torch.tensor([[0.0, 0.0, 1.0]])), axis=0)
-    scene_args = pydiffvg.RenderFunction.serialize_scene(\
-        canvas_width, canvas_height, shapes, shape_groups)
-    img = render(256,   # width
-                 256,   # height
-                 2,     # num_samples_x
-                 2,     # num_samples_y
-                 t+1,   # seed
-                 None, # background_image
-                 *scene_args)
-    # Save the intermediate render.
-    pydiffvg.imwrite(img.cpu(), 'results/single_ellipse_transform/iter_{}.png'.format(t), gamma=2.2)
-    # Compute the loss function. Here it is L2.
-    loss = (img - target).pow(2).sum()
-    print('loss:', loss.item())
+    ellipse_group.shape_to_canvas = shape_to_canvas
+    scene_args = pydiffvg.RenderFunction.serialize_scene(
+        canvas_width, canvas_height, shapes, shape_groups
+    )
+    img = render(
+        canvas_width,
+        canvas_height,
+        num_samples[0],
+        num_samples[1],
+        1,
+        None,
+        *scene_args,
+    )
+    pydiffvg.imwrite(img.cpu(), str(run.results_dir / "init.png"), gamma=2.2)
 
-    # Backpropagate the gradients.
-    loss.backward()
-    # Print the gradients
-    print('color.grad:', color.grad)
-    print('affine.grad:', affine.grad)
+    optimizer = torch.optim.Adam([color, affine], lr=learning_rate)
 
-    # Take a gradient descent step.
-    optimizer.step()
-    # Print the current params.
-    print('color:', ellipse_group.fill_color)
-    print('affine:', affine)
+    t = -1
+    try:
+        for t in range(num_iterations):
+            optimizer.zero_grad()
+            ellipse_group.fill_color = color
+            ellipse_group.shape_to_canvas = torch.cat(
+                (affine, torch.tensor([[0.0, 0.0, 1.0]])), axis=0
+            )
+            scene_args = pydiffvg.RenderFunction.serialize_scene(
+                canvas_width, canvas_height, shapes, shape_groups
+            )
+            img = render(
+                canvas_width,
+                canvas_height,
+                num_samples[0],
+                num_samples[1],
+                t + 1,
+                None,
+                *scene_args,
+            )
+            pydiffvg.imwrite(img.cpu(), str(run.iter_path(t)), gamma=2.2)
+            loss = (img - target).pow(2).sum()
+            loss_value = loss.item()
+            loss.backward()
+            optimizer.step()
+            run.progress.log(t, loss=loss_value)
+    except KeyboardInterrupt:
+        run.progress.interrupt(t if t >= 0 else -1)
+    finally:
+        run.progress.close()
 
-# Render the final result.
-ellipse_group.fill_color = color
-ellipse_group.shape_to_canvas = torch.cat((affine, torch.tensor([[0.0, 0.0, 1.0]])), axis=0)
-scene_args = pydiffvg.RenderFunction.serialize_scene(\
-    canvas_width, canvas_height, shapes, shape_groups)
-img = render(256,   # width
-             256,   # height
-             2,     # num_samples_x
-             2,     # num_samples_y
-             52,    # seed
-             None, # background_image
-             *scene_args)
-# Save the images and differences.
-pydiffvg.imwrite(img.cpu(), 'results/single_ellipse_transform/final.png')
+    ellipse_group.fill_color = color
+    ellipse_group.shape_to_canvas = torch.cat(
+        (affine, torch.tensor([[0.0, 0.0, 1.0]])), axis=0
+    )
+    scene_args = pydiffvg.RenderFunction.serialize_scene(
+        canvas_width, canvas_height, shapes, shape_groups
+    )
+    img = render(
+        canvas_width,
+        canvas_height,
+        num_samples[0],
+        num_samples[1],
+        num_iterations + 2,
+        None,
+        *scene_args,
+    )
+    pydiffvg.imwrite(img.cpu(), str(run.results_dir / "final.png"))
 
-# Convert the intermediate renderings to a video.
-from subprocess import call
-call(["ffmpeg", "-framerate", "24", "-i",
-    "results/single_ellipse_transform/iter_%d.png", "-vb", "20M",
-    "results/single_ellipse_transform/out.mp4"])
+    run.make_video()
+
+
+if __name__ == "__main__":
+    main()

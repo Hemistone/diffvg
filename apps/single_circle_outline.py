@@ -3,116 +3,140 @@ import torch
 import skimage
 import numpy as np
 
-# Use GPU if available
-pydiffvg.set_use_gpu(torch.cuda.is_available())
+from single_utils import create_run_context, log_run_configuration
 
-canvas_width, canvas_height = 256, 256
-circle = pydiffvg.Circle(radius = torch.tensor(40.0),
-                         center = torch.tensor([128.0, 128.0]),
-                         stroke_width = torch.tensor(5.0))
-shapes = [circle]
-circle_group = pydiffvg.ShapeGroup(shape_ids = torch.tensor([0]),
-    fill_color = torch.tensor([0.3, 0.6, 0.3, 1.0]),
-    stroke_color = torch.tensor([0.6, 0.3, 0.6, 0.8]))
-shape_groups = [circle_group]
-scene_args = pydiffvg.RenderFunction.serialize_scene(\
-    canvas_width, canvas_height, shapes, shape_groups)
 
-render = pydiffvg.RenderFunction.apply
-img = render(256, # width
-             256, # height
-             2,   # num_samples_x
-             2,   # num_samples_y
-             0,   # seed
-             None,
-             *scene_args)
-# The output image is in linear RGB space. Do Gamma correction before saving the image.
-pydiffvg.imwrite(img.cpu(), 'results/single_circle_outline/target.png', gamma=2.2)
-target = img.clone()
+def main() -> None:
+    use_gpu = torch.cuda.is_available()
+    pydiffvg.set_use_gpu(use_gpu)
 
-# Move the circle to produce initial guess
-# normalize radius & center for easier learning rate
-radius_n = torch.tensor(20.0 / 256.0, requires_grad=True)
-center_n = torch.tensor([108.0 / 256.0, 138.0 / 256.0], requires_grad=True)
-fill_color = torch.tensor([0.3, 0.2, 0.8, 1.0], requires_grad=True)
-stroke_color = torch.tensor([0.4, 0.7, 0.5, 0.5], requires_grad=True)
-stroke_width_n = torch.tensor(10.0 / 100.0, requires_grad=True)
-circle.radius = radius_n * 256
-circle.center = center_n * 256
-circle.stroke_width = stroke_width_n * 100
-circle_group.fill_color = fill_color
-circle_group.stroke_color = stroke_color
-scene_args = pydiffvg.RenderFunction.serialize_scene(\
-    canvas_width, canvas_height, shapes, shape_groups)
-img = render(256, # width
-             256, # height
-             2,   # num_samples_x
-             2,   # num_samples_y
-             1,   # seed
-             None,
-             *scene_args)
-pydiffvg.imwrite(img.cpu(), 'results/single_circle_outline/init.png', gamma=2.2)
+    canvas_width, canvas_height = 256, 256
+    num_samples = (2, 2)
+    num_iterations = 200
+    learning_rate = 1e-2
 
-# Optimize for radius & center
-optimizer = torch.optim.Adam([radius_n, center_n, fill_color, stroke_color, stroke_width_n], lr=1e-2)
-# Run 200 Adam iterations.
-for t in range(200):
-    print('iteration:', t)
-    optimizer.zero_grad()
-    # Forward pass: render the image.
-    circle.radius = radius_n * 256
-    circle.center = center_n * 256
+    run = create_run_context("single_circle_outline", num_iterations, video_fps=24)
+    log_run_configuration(
+        "single_circle_outline",
+        {
+            "device": "cuda" if use_gpu else "cpu",
+            "canvas": f"{canvas_width}x{canvas_height}",
+            "samples": f"{num_samples[0]}x{num_samples[1]}",
+            "iterations": num_iterations,
+            "lr": learning_rate,
+        },
+    )
+
+    circle = pydiffvg.Circle(
+        radius=torch.tensor(40.0),
+        center=torch.tensor([128.0, 128.0]),
+        stroke_width=torch.tensor(5.0),
+    )
+    shapes = [circle]
+    circle_group = pydiffvg.ShapeGroup(
+        shape_ids=torch.tensor([0]),
+        fill_color=torch.tensor([0.3, 0.6, 0.3, 1.0]),
+        stroke_color=torch.tensor([0.6, 0.3, 0.6, 0.8]),
+    )
+    shape_groups = [circle_group]
+    scene_args = pydiffvg.RenderFunction.serialize_scene(
+        canvas_width, canvas_height, shapes, shape_groups
+    )
+
+    render = pydiffvg.RenderFunction.apply
+    img = render(
+        canvas_width,
+        canvas_height,
+        num_samples[0],
+        num_samples[1],
+        0,
+        None,
+        *scene_args,
+    )
+    pydiffvg.imwrite(img.cpu(), str(run.results_dir / "target.png"), gamma=2.2)
+    target = img.clone()
+
+    radius_n = torch.tensor(20.0 / 256.0, requires_grad=True)
+    center_n = torch.tensor([108.0 / 256.0, 138.0 / 256.0], requires_grad=True)
+    fill_color = torch.tensor([0.3, 0.2, 0.8, 1.0], requires_grad=True)
+    stroke_color = torch.tensor([0.4, 0.7, 0.5, 0.5], requires_grad=True)
+    stroke_width_n = torch.tensor(10.0 / 100.0, requires_grad=True)
+    circle.radius = radius_n * canvas_width
+    circle.center = center_n * canvas_width
     circle.stroke_width = stroke_width_n * 100
     circle_group.fill_color = fill_color
     circle_group.stroke_color = stroke_color
-    scene_args = pydiffvg.RenderFunction.serialize_scene(\
-        canvas_width, canvas_height, shapes, shape_groups)
-    img = render(256,   # width
-                 256,   # height
-                 2,     # num_samples_x
-                 2,     # num_samples_y
-                 t+1,   # seed
-                 None,
-                 *scene_args)
-    # Save the intermediate render.
-    pydiffvg.imwrite(img.cpu(), 'results/single_circle_outline/iter_{}.png'.format(t), gamma=2.2)
-    # Compute the loss function. Here it is L2.
-    loss = (img - target).pow(2).sum()
-    print('loss:', loss.item())
+    scene_args = pydiffvg.RenderFunction.serialize_scene(
+        canvas_width, canvas_height, shapes, shape_groups
+    )
+    img = render(
+        canvas_width,
+        canvas_height,
+        num_samples[0],
+        num_samples[1],
+        1,
+        None,
+        *scene_args,
+    )
+    pydiffvg.imwrite(img.cpu(), str(run.results_dir / "init.png"), gamma=2.2)
 
-    # Backpropagate the gradients.
-    loss.backward()
-    # Print the gradients
-    print('radius.grad:', radius_n.grad)
-    print('center.grad:', center_n.grad)
-    print('fill_color.grad:', fill_color.grad)
-    print('stroke_color.grad:', stroke_color.grad)
-    print('stroke_width.grad:', stroke_width_n.grad)
+    optimizer = torch.optim.Adam(
+        [radius_n, center_n, fill_color, stroke_color, stroke_width_n], lr=learning_rate
+    )
 
-    # Take a gradient descent step.
-    optimizer.step()
-    # Print the current params.
-    print('radius:', circle.radius)
-    print('center:', circle.center)
-    print('stroke_width:', circle.stroke_width)
-    print('fill_color:', circle_group.fill_color)
-    print('stroke_color:', circle_group.stroke_color)
+    t = -1
+    try:
+        for t in range(num_iterations):
+            optimizer.zero_grad()
+            circle.radius = radius_n * canvas_width
+            circle.center = center_n * canvas_width
+            circle.stroke_width = stroke_width_n * 100
+            circle_group.fill_color = fill_color
+            circle_group.stroke_color = stroke_color
+            scene_args = pydiffvg.RenderFunction.serialize_scene(
+                canvas_width, canvas_height, shapes, shape_groups
+            )
+            img = render(
+                canvas_width,
+                canvas_height,
+                num_samples[0],
+                num_samples[1],
+                t + 1,
+                None,
+                *scene_args,
+            )
+            pydiffvg.imwrite(img.cpu(), str(run.iter_path(t)), gamma=2.2)
+            loss = (img - target).pow(2).sum()
+            loss_value = loss.item()
+            loss.backward()
+            optimizer.step()
+            run.progress.log(t, loss=loss_value)
+    except KeyboardInterrupt:
+        run.progress.interrupt(t if t >= 0 else -1)
+    finally:
+        run.progress.close()
 
-# Render the final result.
-scene_args = pydiffvg.RenderFunction.serialize_scene(\
-    canvas_width, canvas_height, shapes, shape_groups)
-img = render(256,   # width
-             256,   # height
-             2,     # num_samples_x
-             2,     # num_samples_y
-             202,    # seed
-             None,
-             *scene_args)
-# Save the images and differences.
-pydiffvg.imwrite(img.cpu(), 'results/single_circle_outline/final.png')
+    circle.radius = radius_n * canvas_width
+    circle.center = center_n * canvas_width
+    circle.stroke_width = stroke_width_n * 100
+    circle_group.fill_color = fill_color
+    circle_group.stroke_color = stroke_color
+    scene_args = pydiffvg.RenderFunction.serialize_scene(
+        canvas_width, canvas_height, shapes, shape_groups
+    )
+    img = render(
+        canvas_width,
+        canvas_height,
+        num_samples[0],
+        num_samples[1],
+        num_iterations + 2,
+        None,
+        *scene_args,
+    )
+    pydiffvg.imwrite(img.cpu(), str(run.results_dir / "final.png"))
 
-# Convert the intermediate renderings to a video.
-from subprocess import call
-call(["ffmpeg", "-framerate", "24", "-i",
-    "results/single_circle_outline/iter_%d.png", "-vb", "20M",
-    "results/single_circle_outline/out.mp4"])
+    run.make_video()
+
+
+if __name__ == "__main__":
+    main()
