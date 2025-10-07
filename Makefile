@@ -21,3 +21,15 @@ run-samples:
 dev-check: dev-clean run-direct run-samples
 	@echo "[dev-check] complete"
 
+# Remove Python bytecode caches for this venv.
+clean-pyc:
+	# Remove repo-local __pycache__ and *.py[co]
+	find . -type d -name '__pycache__' -prune -exec rm -rf {} + || true
+	find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete || true
+	# Remove centralized pycache entries corresponding to this venv's site-packages
+	SP=$$(python -c "import sys, pathlib; p=pathlib.Path(sys.prefix)/'lib'/f'python{sys.version_info.major}.{sys.version_info.minor}'/'site-packages'; print(p)"); \
+		rm -rf "$$HOME/.cache/pycache$$SP" || true; \
+		if [ -d "$$SP" ]; then \
+			find "$$SP" -type d -name '__pycache__' -prune -exec rm -rf {} + || true; \
+			find "$$SP" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete || true; \
+		fi

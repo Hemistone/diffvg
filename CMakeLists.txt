@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.23)
 
+if(POLICY CMP0146)
+    # Avoid passing '--forward-unknown-to-host-compiler' to nvcc; CUDA 12.8
+    # can segfault when the flag is present on large translation units.
+    cmake_policy(SET CMP0146 OLD)
+endif()
+
 project(diffvg VERSION 0.2.0 DESCRIPTION "Differentiable Vector Graphics")
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
@@ -10,15 +16,30 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Build options first (used below)
 # Make CUDA optional and default to ON for source installs
 option(DIFFVG_CUDA "Build diffvg with GPU code path?" ON)
+# Optional features (OFF by default)
+option(DIFFVG_OPENMP "Enable OpenMP for CPU parallelism" OFF)
+option(DIFFVG_LTO "Enable link-time optimization (IPO/LTO)" OFF)
+option(DIFFVG_NATIVE "Enable -march=native for CPU compilation" OFF)
+option(DIFFVG_FAST_MATH "Enable --use_fast_math for CUDA compilation" OFF)
+option(DIFFVG_CUDA_FULL_TU "Compile both diffvg.cpp and scene.cpp as CUDA" OFF)
 
 # Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-# Prefer system pybind11, fall back to vendored copy
-find_package(pybind11 CONFIG QUIET)
+
+option(DIFFVG_USE_SYSTEM_PYBIND11 "Use a system-installed pybind11 instead of the vendored copy" OFF)
+if(DIFFVG_USE_SYSTEM_PYBIND11)
+    find_package(pybind11 CONFIG QUIET)
+    if(pybind11_FOUND)
+        message(STATUS "Using system pybind11 ${pybind11_VERSION}")
+    endif()
+endif()
 if(NOT pybind11_FOUND)
     # Allow older pybind11 CMake to run with modern CMake via policy minimum
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
     add_subdirectory(pybind11)
+    set(pybind11_FOUND TRUE)
+    set(pybind11_VERSION "vendored")
+    message(STATUS "Using vendored pybind11")
 endif()
 
 if(DIFFVG_CUDA)
@@ -36,8 +57,13 @@ if(DIFFVG_CUDA)
             message(WARNING "CUDAToolkit not found. Building without CUDA support.")
             set(DIFFVG_CUDA OFF)
         else()
-            set(CMAKE_CUDA_STANDARD 14)
+            set(CAME_CUDA_STD_TMP 17)
+            set(CMAKE_CUDA_STANDARD ${CAME_CUDA_STD_TMP})
             set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+            # Keep nvcc stable on large TUs by not forwarding unknown flags
+            set(CMAKE_CUDA_FORWARD_UNKNOWN_TO_HOST_COMPILER OFF)
+            # Ensure we link against the shared CUDA runtime only (avoid cudart_static/cudadevrt)
+            set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
             # Determine CUDA architectures robustly
             # Priority: CMAKE_CUDA_ARCHITECTURES (user) > TORCH_CUDA_ARCH_LIST env > DIFFVG_CUDA_ARCHS env > default
             if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
@@ -124,8 +150,26 @@ if(DIFFVG_CUDA)
 endif()
 
 if(NOT MSVC)
-  # These compile definitions are not meaningful for MSVC
-  add_compile_options(-Wall -g -O3 -fvisibility=hidden -Wno-unknown-pragmas)
+  # Host compiler flags (C++ only) — avoid generator-expression lists to prevent quoting issues
+  if(CMAKE_BUILD_TYPE MATCHES "Debug")
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-g>)
+  endif()
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O0>)
+    set(CMAKE_CXX_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "" FORCE)
+    if(DIFFVG_CUDA)
+      # Do not add -g0 to CUDA flags; nvcc doesn't support it.
+      set(CMAKE_CUDA_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "" FORCE)
+    endif()
+  else()
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O3>)
+  endif()
+  if(DIFFVG_NATIVE)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-march=native>)
+  endif()
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fvisibility=hidden>)
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wno-unknown-pragmas>)
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall>)
 else()
   add_compile_options(/Wall /Zi)
   add_link_options(/DEBUG)
@@ -161,13 +205,31 @@ set(SRCS atomic.h
          shape.cpp)
 
 add_library(diffvg MODULE ${SRCS})
+if(NOT DIFFVG_CUDA AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+    # Redundant with the global fallback but keep explicit in case flags change elsewhere.
+    set_source_files_properties(diffvg.cpp scene.cpp PROPERTIES COMPILE_OPTIONS "-O0")
+endif()
 if(DIFFVG_CUDA)
     target_compile_definitions(diffvg PRIVATE COMPILE_WITH_CUDA)
-    # Compile select sources with CUDA language to enable device code
-    set_source_files_properties(
-        diffvg.cpp
-        scene.cpp
-        PROPERTIES LANGUAGE CUDA)
+    # Compile CUDA kernels: default to scene.cpp only for nvcc stability.
+    if(DIFFVG_CUDA_FULL_TU)
+        set_source_files_properties(diffvg.cpp scene.cpp PROPERTIES LANGUAGE CUDA)
+    else()
+        set_source_files_properties(scene.cpp PROPERTIES LANGUAGE CUDA)
+    endif()
+    # CUDA-specific flags
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xptxas -O0>)
+    # Forward host flags to host compiler when compiling CUDA
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fvisibility=hidden>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-unknown-pragmas>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wall>)
+    if(DIFFVG_FAST_MATH)
+        target_compile_options(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
+    endif()
+    # Avoid separable device linking to prevent pulling cudadevrt/cudart_static
+    set_target_properties(diffvg PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+    set_target_properties(diffvg PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS OFF)
 endif()
 
 if(APPLE)
@@ -203,7 +265,24 @@ elseif(APPLE)
     set_target_properties(diffvg PROPERTIES INSTALL_RPATH "@loader_path")
 endif()
 
-set_property(TARGET diffvg PROPERTY CXX_STANDARD 14)
+# Optional: OpenMP for CPU builds
+if(DIFFVG_OPENMP)
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(diffvg PRIVATE OpenMP::OpenMP_CXX)
+    else()
+        message(WARNING "OpenMP requested but not found; building without it.")
+    endif()
+endif()
+
+# Optional: LTO/IPO
+if(DIFFVG_LTO)
+    if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13))
+        set_property(TARGET diffvg PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
+endif()
+
+set_property(TARGET diffvg PROPERTY CXX_STANDARD 17)
 set_target_properties(diffvg PROPERTIES PREFIX "")
 # Still enable assertion in release mode
 string( REPLACE "/DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")

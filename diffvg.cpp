@@ -22,8 +22,27 @@
 #include <pybind11/stl.h>
 #include <thrust/execution_policy.h>
 #include <thrust/sort.h>
+#include <thrust/device_ptr.h>
+#include <cstdint>
+#include <cstdlib>
 
 namespace py = pybind11;
+
+static inline bool diffvg_disable_gpu_sort() {
+    const char *env = std::getenv("DIFFVG_DISABLE_GPU_SORT");
+    if (!env) return false;
+    // Treat any non-empty, non-"0" value as true
+    return env[0] != '\0' && !(env[0] == '0' && env[1] == '\0');
+}
+
+#ifdef COMPILE_WITH_CUDA
+// Implemented in scene.cpp (compiled as a CUDA TU).
+#ifdef __cplusplus
+extern "C" void diffvg_gpu_sort_by_key_uint_uint(uint32_t* keys, int* vals, size_t n);
+#else
+extern void diffvg_gpu_sort_by_key_uint_uint(uint32_t* keys, int* vals, size_t n);
+#endif
+#endif
 
 struct Command {
     int shape_group_id;
@@ -1593,7 +1612,11 @@ void render(std::shared_ptr<Scene> scene,
             morton_codes
         }, num_samples, scene->use_gpu);
         if (scene->use_gpu) {
-            thrust::sort_by_key(thrust::device, morton_codes, morton_codes + num_samples, boundary_ids);
+#ifdef COMPILE_WITH_CUDA
+            if (!diffvg_disable_gpu_sort()) {
+                diffvg_gpu_sort_by_key_uint_uint(morton_codes, boundary_ids, num_samples);
+            }
+#endif
         } else {
             // Don't need to sort for CPU, we are not using SIMD hardware anyway.
             // thrust::sort_by_key(thrust::host, morton_codes, morton_codes + num_samples, boundary_ids);
@@ -1651,6 +1674,14 @@ void render(std::shared_ptr<Scene> scene,
 
 PYBIND11_MODULE(diffvg, m) {
     m.doc() = "Differential Vector Graphics";
+
+#ifdef COMPILE_WITH_CUDA
+    constexpr bool diffvg_compiled_with_cuda = true;
+#else
+    constexpr bool diffvg_compiled_with_cuda = false;
+#endif
+    m.def("is_cuda_compiled", []() { return diffvg_compiled_with_cuda; },
+          "Return True if diffvg was built with CUDA support.");
 
     py::class_<ptr<void>>(m, "void_ptr")
         .def(py::init<std::size_t>())

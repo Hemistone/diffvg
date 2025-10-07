@@ -1,4 +1,7 @@
 #include "scene.h"
+#include <thrust/execution_policy.h>
+#include <thrust/sort.h>
+#include <thrust/device_ptr.h>
 #include "aabb.h"
 #include "cuda_utils.h"
 #include "filter.h"
@@ -108,6 +111,13 @@ void copy_and_init_shapes(Scene &scene,
         scene.d_shapes[shape_id].type = shape_list[shape_id]->type;
         scene.d_shapes[shape_id].stroke_width = 0;
     }
+}
+
+// Host function compiled with nvcc; can invoke Thrust on device pointers.
+extern "C" void diffvg_gpu_sort_by_key_uint_uint(uint32_t* keys, int* vals, size_t n) {
+    auto d_keys = thrust::device_pointer_cast(keys);
+    auto d_vals = thrust::device_pointer_cast(vals);
+    thrust::sort_by_key(thrust::device, d_keys, d_keys + n, d_vals);
 }
 
 std::vector<float>
