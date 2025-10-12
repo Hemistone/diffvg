@@ -4,6 +4,7 @@ import pydiffvg
 import time
 from enum import IntEnum
 import warnings
+from .serialization import serialize_scene as _serialize_scene
 
 print_timing = False
 
@@ -33,143 +34,16 @@ class RenderFunction(torch.autograd.Function):
             Given a list of shapes, convert them to a linear list of argument,
             so that we can use it in PyTorch.
         """
-        num_shapes = len(shapes)
-        num_shape_groups = len(shape_groups)
-        args = []
-        args.append(canvas_width)
-        args.append(canvas_height)
-        args.append(num_shapes)
-        args.append(num_shape_groups)
-        args.append(output_type)
-        args.append(use_prefiltering)
-        args.append(eval_positions.to(pydiffvg.get_device()))
-        for shape in shapes:
-            use_thickness = False
-            if isinstance(shape, pydiffvg.Circle):
-                assert(shape.center.is_contiguous())
-                args.append(diffvg.ShapeType.circle)
-                args.append(shape.radius.cpu())
-                args.append(shape.center.cpu())
-            elif isinstance(shape, pydiffvg.Ellipse):
-                assert(shape.radius.is_contiguous())
-                assert(shape.center.is_contiguous())
-                args.append(diffvg.ShapeType.ellipse)
-                args.append(shape.radius.cpu())
-                args.append(shape.center.cpu())
-            elif isinstance(shape, pydiffvg.Path):
-                assert(shape.num_control_points.is_contiguous())
-                assert(shape.points.is_contiguous())
-                assert(shape.points.shape[1] == 2)
-                assert(torch.isfinite(shape.points).all())
-                args.append(diffvg.ShapeType.path)
-                args.append(shape.num_control_points.to(torch.int32).cpu())
-                args.append(shape.points.cpu())
-                if len(shape.stroke_width.shape) > 0 and shape.stroke_width.shape[0] > 1:
-                    assert(torch.isfinite(shape.stroke_width).all())
-                    use_thickness = True
-                    args.append(shape.stroke_width.cpu())
-                else:
-                    args.append(None)
-                args.append(shape.is_closed)
-                args.append(shape.use_distance_approx)
-            elif isinstance(shape, pydiffvg.Polygon):
-                assert(shape.points.is_contiguous())
-                assert(shape.points.shape[1] == 2)
-                args.append(diffvg.ShapeType.path)
-                if shape.is_closed:
-                    args.append(torch.zeros(shape.points.shape[0], dtype = torch.int32))
-                else:
-                    args.append(torch.zeros(shape.points.shape[0] - 1, dtype = torch.int32))
-                args.append(shape.points.cpu())
-                args.append(None)  
-                args.append(shape.is_closed)
-                args.append(False) # use_distance_approx
-            elif isinstance(shape, pydiffvg.Rect):
-                assert(shape.p_min.is_contiguous())
-                assert(shape.p_max.is_contiguous())
-                args.append(diffvg.ShapeType.rect)
-                args.append(shape.p_min.cpu())
-                args.append(shape.p_max.cpu())
-            else:
-                assert(False)
-            if use_thickness:
-                args.append(torch.tensor(0.0))
-            else:
-                args.append(shape.stroke_width.cpu())
-
-        for shape_group in shape_groups:
-            assert(shape_group.shape_ids.is_contiguous())
-            args.append(shape_group.shape_ids.to(torch.int32).cpu())
-            # Fill color
-            if shape_group.fill_color is None:
-                args.append(None)
-            elif isinstance(shape_group.fill_color, torch.Tensor):
-                assert(shape_group.fill_color.is_contiguous())
-                args.append(diffvg.ColorType.constant)
-                args.append(shape_group.fill_color.cpu())
-            elif isinstance(shape_group.fill_color, pydiffvg.LinearGradient):
-                assert(shape_group.fill_color.begin.is_contiguous())
-                assert(shape_group.fill_color.end.is_contiguous())
-                assert(shape_group.fill_color.offsets.is_contiguous())
-                assert(shape_group.fill_color.stop_colors.is_contiguous())
-                args.append(diffvg.ColorType.linear_gradient)
-                args.append(shape_group.fill_color.begin.cpu())
-                args.append(shape_group.fill_color.end.cpu())
-                args.append(shape_group.fill_color.offsets.cpu())
-                args.append(shape_group.fill_color.stop_colors.cpu())
-            elif isinstance(shape_group.fill_color, pydiffvg.RadialGradient):
-                assert(shape_group.fill_color.center.is_contiguous())
-                assert(shape_group.fill_color.radius.is_contiguous())
-                assert(shape_group.fill_color.offsets.is_contiguous())
-                assert(shape_group.fill_color.stop_colors.is_contiguous())
-                args.append(diffvg.ColorType.radial_gradient)
-                args.append(shape_group.fill_color.center.cpu())
-                args.append(shape_group.fill_color.radius.cpu())
-                args.append(shape_group.fill_color.offsets.cpu())
-                args.append(shape_group.fill_color.stop_colors.cpu())
-
-            if shape_group.fill_color is not None:
-                # go through the underlying shapes and check if they are all closed
-                for shape_id in shape_group.shape_ids:
-                    if isinstance(shapes[shape_id], pydiffvg.Path):
-                        if not shapes[shape_id].is_closed:
-                            warnings.warn("Detected non-closed paths with fill color. This might causes unexpected results.", Warning)
-
-            # Stroke color
-            if shape_group.stroke_color is None:
-                args.append(None)
-            elif isinstance(shape_group.stroke_color, torch.Tensor):
-                assert(shape_group.stroke_color.is_contiguous())
-                args.append(diffvg.ColorType.constant)
-                args.append(shape_group.stroke_color.cpu())
-            elif isinstance(shape_group.stroke_color, pydiffvg.LinearGradient):
-                assert(shape_group.stroke_color.begin.is_contiguous())
-                assert(shape_group.stroke_color.end.is_contiguous())
-                assert(shape_group.stroke_color.offsets.is_contiguous())
-                assert(shape_group.stroke_color.stop_colors.is_contiguous())
-                assert(torch.isfinite(shape_group.stroke_color.stop_colors).all())
-                args.append(diffvg.ColorType.linear_gradient)
-                args.append(shape_group.stroke_color.begin.cpu())
-                args.append(shape_group.stroke_color.end.cpu())
-                args.append(shape_group.stroke_color.offsets.cpu())
-                args.append(shape_group.stroke_color.stop_colors.cpu())
-            elif isinstance(shape_group.stroke_color, pydiffvg.RadialGradient):
-                assert(shape_group.stroke_color.center.is_contiguous())
-                assert(shape_group.stroke_color.radius.is_contiguous())
-                assert(shape_group.stroke_color.offsets.is_contiguous())
-                assert(shape_group.stroke_color.stop_colors.is_contiguous())
-                assert(torch.isfinite(shape_group.stroke_color.stop_colors).all())
-                args.append(diffvg.ColorType.radial_gradient)
-                args.append(shape_group.stroke_color.center.cpu())
-                args.append(shape_group.stroke_color.radius.cpu())
-                args.append(shape_group.stroke_color.offsets.cpu())
-                args.append(shape_group.stroke_color.stop_colors.cpu())
-            args.append(shape_group.use_even_odd_rule)
-            # Transformation
-            args.append(shape_group.shape_to_canvas.contiguous().cpu())
-        args.append(filter.type)
-        args.append(filter.radius.cpu())
-        return args
+        # Delegate to extracted helper to keep behavior identical
+        # Note: we keep the default filter here to avoid import-time cycles in the helper
+        return _serialize_scene(canvas_width,
+                                canvas_height,
+                                shapes,
+                                shape_groups,
+                                filter,
+                                output_type,
+                                use_prefiltering,
+                                eval_positions)
 
     @staticmethod
     def forward(ctx,
