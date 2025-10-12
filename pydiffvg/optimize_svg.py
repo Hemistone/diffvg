@@ -1605,3 +1605,5 @@ class OptimizableSvg:
     #endregion
 
 
+__all__ = ["SvgOptimizationSettings", "OptimizableSvg"]
+

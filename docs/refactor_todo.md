@@ -40,8 +40,8 @@ Acceptance checks per change
 Backlog (small, incremental tasks)
 
 - [done] Add `docs/refactor_todo.md` (this file) and keep updated
-- [todo] Document stable public API surface in `pydiffvg/__init__.py`
-- [doing] Add `__all__` and avoid wildcard re-exports in package modules (device, color, pixel_filter, shape, image, parse_svg, save_svg, render_pytorch, serialization done; optimize_svg cleanup pending)
+- [done] Document stable public API surface in `pydiffvg/__init__.py`
+- [done] Add `__all__` and avoid wildcard re-exports in package modules (device, color, pixel_filter, shape, image, parse_svg, save_svg, render_pytorch, serialization, optimize_svg)
 - [done] Factor `RenderFunction.serialize_scene` into `pydiffvg/serialization.py`
 - [done] Add docstrings + type hints for `device.py`, `pixel_filter.py`, `shape.py`, `color.py`
 - [done] Add docstrings/types for `image.py`, `save_svg.py`, and key functions in `parse_svg.py`
