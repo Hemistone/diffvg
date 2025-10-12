@@ -742,3 +742,6 @@ class RenderFunction(torch.autograd.Function):
         d_args.append(torch.tensor(scene.get_d_filter_radius()))
 
         return tuple(d_args)
+
+
+__all__ = ["RenderFunction", "OutputType", "set_print_timing"]

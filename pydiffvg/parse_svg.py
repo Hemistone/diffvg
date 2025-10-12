@@ -1,3 +1,5 @@
+"""SVG parsing utilities to build pydiffvg scenes."""
+
 import torch
 import xml.etree.ElementTree as etree
 import numpy as np
@@ -584,8 +586,11 @@ def svg_to_scene(filename):
     ret = parse_scene(root)
     os.chdir(cwd)
     return ret
-"""SVG parsing utilities to build pydiffvg scenes.
 
-Functions here parse XML nodes/attributes into pydiffvg shapes and groups.
-Type hints are added to aid navigation; behavior is unchanged.
-"""
+
+__all__ = [
+    "svg_to_scene",
+    "parse_scene",
+    "parse_transform",
+    "parse_color",
+]

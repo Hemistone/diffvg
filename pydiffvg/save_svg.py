@@ -168,3 +168,6 @@ def save_svg(
 
     with open(filename, "w") as f:
         f.write(prettify(root))
+
+
+__all__ = ["save_svg"]

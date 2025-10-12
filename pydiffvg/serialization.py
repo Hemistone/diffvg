@@ -164,3 +164,5 @@ def serialize_scene(
     args.append(filter.radius.cpu())
     return args
 
+
+__all__ = ["serialize_scene"]

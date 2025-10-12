@@ -41,7 +41,7 @@ Backlog (small, incremental tasks)
 
 - [done] Add `docs/refactor_todo.md` (this file) and keep updated
 - [todo] Document stable public API surface in `pydiffvg/__init__.py`
-- [doing] Add `__all__` and avoid wildcard re-exports in package modules (device, color, pixel_filter, shape, image done; parse_svg/save_svg/render_pytorch to follow)
+- [doing] Add `__all__` and avoid wildcard re-exports in package modules (device, color, pixel_filter, shape, image, parse_svg, save_svg, render_pytorch, serialization done; optimize_svg cleanup pending)
 - [done] Factor `RenderFunction.serialize_scene` into `pydiffvg/serialization.py`
 - [done] Add docstrings + type hints for `device.py`, `pixel_filter.py`, `shape.py`, `color.py`
 - [done] Add docstrings/types for `image.py`, `save_svg.py`, and key functions in `parse_svg.py`
@@ -49,7 +49,7 @@ Backlog (small, incremental tasks)
 - [done] Introduce `pydiffvg/dev.py` for debug toggles (e.g., `set_print_timing`) and wire into renderer
 - [todo] Add a tiny smoke script for both CPU/CUDA: `scripts/test_render_paths.py` (no gradients)
 - [done] CMake: add optional `-fsanitize=address,undefined` for host files via `-DDIFFVG_SANITIZE=ON`
-- [doing] C++: create `bindings.cpp` and start gradual migration of pybind11 binds from `diffvg.cpp` (moved Vector2f/3f/4f)
+- [doing] C++: create `bindings.cpp` and start gradual migration of pybind11 binds from `diffvg.cpp` (moved Vector2f/3f/4f, ptr helpers, FilterType/Filter, ColorType + gradients)
 - [todo] C++: extract GPU sort dispatch; ensure CPU fallback without Thrust device when `DIFFVG_DISABLE_GPU_SORT=1`
 - [todo] C++: add lightweight `public_api.h` exposing only functions used by bindings
 - [done] Python: introduce a `Renderer` class (preallocation, reusable scene) — design stub only

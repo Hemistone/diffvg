@@ -28,7 +28,12 @@
 namespace py = pybind11;
 
 // Forward registration from bindings.cpp (incremental migration)
-namespace diffvg_bindings { void register_math(py::module_ &m); }
+namespace diffvg_bindings {
+    void register_math(py::module_ &m);
+    void register_ptr(py::module_ &m);
+    void register_filter(py::module_ &m);
+    void register_color(py::module_ &m);
+}
 
 static inline bool diffvg_disable_gpu_sort() {
     const char *env = std::getenv("DIFFVG_DISABLE_GPU_SORT");
@@ -1685,16 +1690,9 @@ PYBIND11_MODULE(diffvg, m) {
     m.def("is_cuda_compiled", []() { return diffvg_compiled_with_cuda; },
           "Return True if diffvg was built with CUDA support.");
 
-    py::class_<ptr<void>>(m, "void_ptr")
-        .def(py::init<std::size_t>())
-        .def("as_size_t", &ptr<void>::as_size_t);
-    py::class_<ptr<float>>(m, "float_ptr")
-        .def(py::init<std::size_t>());
-    py::class_<ptr<int>>(m, "int_ptr")
-        .def(py::init<std::size_t>());
-
     // Vectors are registered from bindings.cpp to keep this TU smaller
     diffvg_bindings::register_math(m);
+    diffvg_bindings::register_ptr(m);
 
     py::enum_<ShapeType>(m, "ShapeType")
         .value("circle", ShapeType::Circle)
@@ -1727,31 +1725,7 @@ PYBIND11_MODULE(diffvg, m) {
         .def_readonly("p_min", &Rect::p_min)
         .def_readonly("p_max", &Rect::p_max);
 
-    py::enum_<ColorType>(m, "ColorType")
-        .value("constant", ColorType::Constant)
-        .value("linear_gradient", ColorType::LinearGradient)
-        .value("radial_gradient", ColorType::RadialGradient);
-
-    py::class_<Constant>(m, "Constant")
-        .def(py::init<Vector4f>())
-        .def("get_ptr", &Constant::get_ptr)
-        .def_readonly("color", &Constant::color);
-
-    py::class_<LinearGradient>(m, "LinearGradient")
-        .def(py::init<Vector2f, Vector2f, int, ptr<float>, ptr<float>>())
-        .def("get_ptr", &LinearGradient::get_ptr)
-        .def("copy_to", &LinearGradient::copy_to)
-        .def_readonly("begin", &LinearGradient::begin)
-        .def_readonly("end", &LinearGradient::end)
-        .def_readonly("num_stops", &LinearGradient::num_stops);
-
-    py::class_<RadialGradient>(m, "RadialGradient")
-        .def(py::init<Vector2f, Vector2f, int, ptr<float>, ptr<float>>())
-        .def("get_ptr", &RadialGradient::get_ptr)
-        .def("copy_to", &RadialGradient::copy_to)
-        .def_readonly("center", &RadialGradient::center)
-        .def_readonly("radius", &RadialGradient::radius)
-        .def_readonly("num_stops", &RadialGradient::num_stops);
+    diffvg_bindings::register_color(m);
 
     py::class_<Shape>(m, "Shape")
         .def(py::init<ShapeType, ptr<void>, float>())
@@ -1783,15 +1757,7 @@ PYBIND11_MODULE(diffvg, m) {
         .def_readonly("fill_color_type", &ShapeGroup::fill_color_type)
         .def_readonly("stroke_color_type", &ShapeGroup::stroke_color_type);
 
-    py::enum_<FilterType>(m, "FilterType")
-        .value("box", FilterType::Box)
-        .value("tent", FilterType::Tent)
-        .value("parabolic", FilterType::RadialParabolic)
-        .value("hann", FilterType::Hann);
-
-    py::class_<Filter>(m, "Filter")
-        .def(py::init<FilterType,
-                      float>());
+    diffvg_bindings::register_filter(m);
 
     py::class_<Scene, std::shared_ptr<Scene>>(m, "Scene")
         .def(py::init<int,
