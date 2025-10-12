@@ -53,7 +53,7 @@ Backlog (small, incremental tasks)
 - [todo] C++: extract GPU sort dispatch; ensure CPU fallback without Thrust device when `DIFFVG_DISABLE_GPU_SORT=1`
 - [todo] C++: add lightweight `public_api.h` exposing only functions used by bindings
 - [done] Python: introduce a `Renderer` class (preallocation, reusable scene) — design stub only
-- [todo] Add minimal perf harness under `apps/` to time color vs. sdf outputs
+- [done] Add minimal perf harness under `apps/` to time color vs. sdf outputs (`apps/perf_render_compare.py`)
 - [todo] Improve error messages for non-closed paths with fill (actionable hints)
 - [todo] Add CONTRIBUTING notes for CPU vs CUDA builds and debugging tips
 
