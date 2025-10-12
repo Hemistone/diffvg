@@ -5,12 +5,15 @@ import time
 from enum import IntEnum
 import warnings
 from .serialization import serialize_scene as _serialize_scene
+from . import dev as _dev
 
+# Backward-compat wrapper: keep old API while centralizing the flag
 print_timing = False
 
 def set_print_timing(val):
     global print_timing
-    print_timing=val
+    print_timing = bool(val)
+    _dev.set_print_timing(bool(val))
 
 class OutputType(IntEnum):
     color = 1
@@ -241,8 +244,7 @@ class RenderFunction(torch.autograd.Function):
             shapes, shape_groups, filt, pydiffvg.get_use_gpu(),
             pydiffvg.get_device().index if pydiffvg.get_device().index is not None else -1)
         time_elapsed = time.time() - start
-        global print_timing
-        if print_timing:
+        if _dev.get_print_timing():
             print('Scene construction, time: %.5f s' % time_elapsed)
 
         if output_type == OutputType.color:
@@ -283,7 +285,7 @@ class RenderFunction(torch.autograd.Function):
                       eval_positions.shape[0])
         assert(torch.isfinite(rendered_image).all())
         time_elapsed = time.time() - start
-        if print_timing:
+        if _dev.get_print_timing():
             print('Forward pass, time: %.5f s' % time_elapsed)
 
         ctx.scene = scene

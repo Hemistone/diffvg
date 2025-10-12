@@ -46,10 +46,10 @@ Backlog (small, incremental tasks)
 - [done] Add docstrings + type hints for `device.py`, `pixel_filter.py`, `shape.py`, `color.py`
 - [done] Add docstrings/types for `image.py`, `save_svg.py`, and key functions in `parse_svg.py`
 - [doing] Ensure `apps/single_*` use `pydiffvg.get_device()` consistently (majority updated)
-- [todo] Introduce `pydiffvg/dev.py` for debug toggles (e.g., `set_print_timing`), unify usage
+- [done] Introduce `pydiffvg/dev.py` for debug toggles (e.g., `set_print_timing`) and wire into renderer
 - [todo] Add a tiny smoke script for both CPU/CUDA: `scripts/test_render_paths.py` (no gradients)
-- [todo] CMake: add optional `-fsanitize=address,undefined` for host files via `-DDIFFVG_SANITIZE=ON`
-- [todo] C++: create `bindings.cpp` and move pybind11 module definitions gradually from `diffvg.cpp`
+- [done] CMake: add optional `-fsanitize=address,undefined` for host files via `-DDIFFVG_SANITIZE=ON`
+- [doing] C++: create `bindings.cpp` (added empty TU) and plan gradual migration of pybind11 binds from `diffvg.cpp`
 - [todo] C++: extract GPU sort dispatch; ensure CPU fallback without Thrust device when `DIFFVG_DISABLE_GPU_SORT=1`
 - [todo] C++: add lightweight `public_api.h` exposing only functions used by bindings
 - [done] Python: introduce a `Renderer` class (preallocation, reusable scene) — design stub only

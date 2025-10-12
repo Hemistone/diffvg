@@ -22,6 +22,7 @@ option(DIFFVG_LTO "Enable link-time optimization (IPO/LTO)" OFF)
 option(DIFFVG_NATIVE "Enable -march=native for CPU compilation" OFF)
 option(DIFFVG_FAST_MATH "Enable --use_fast_math for CUDA compilation" OFF)
 option(DIFFVG_CUDA_FULL_TU "Compile both diffvg.cpp and scene.cpp as CUDA" OFF)
+option(DIFFVG_SANITIZE "Enable host sanitizers (asan, ubsan) for C++ sources" OFF)
 
 # Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
@@ -199,6 +200,7 @@ set(SRCS atomic.h
          winding_number.h
          atomic.cpp
          color.cpp
+         bindings.cpp
          diffvg.cpp
          parallel.cpp
          scene.cpp
@@ -248,6 +250,13 @@ target_link_libraries(diffvg ${DYNAMIC_LOOKUP} pybind11::module)
 if(DIFFVG_CUDA)
     # Link against shared cudart to avoid duplication with PyTorch CUDA runtime
     target_link_libraries(diffvg CUDA::cudart)
+endif()
+
+# Optional: Host sanitizers (C++ only)
+if(DIFFVG_SANITIZE AND NOT MSVC)
+    message(STATUS "Enabling host sanitizers for C++ sources")
+    target_compile_options(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fsanitize=address,undefined>)
+    target_link_options(diffvg PRIVATE -fsanitize=address,undefined)
 endif()
 
 if(WIN32)
