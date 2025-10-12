@@ -25,6 +25,7 @@ Phases (high level)
 2) Python API boundary cleanup (smaller modules, typing)
 3) C++ bindings boundary cleanup (separate bindings vs. algorithms)
 4) Performance scaffolding (renderer object, preallocation hooks)
+5) Backend abstraction for new renderers (Bezier Splatting)
 
 Acceptance checks per change
 
@@ -52,6 +53,7 @@ Backlog (small, incremental tasks)
 - [todo] Improve error messages for non-closed paths with fill (actionable hints)
 - [todo] Add CONTRIBUTING notes for CPU vs CUDA builds and debugging tips
 
+
 Proposed First Milestone (Week 1)
 
 - Extract scene serialization (no behavior change) — done
@@ -62,6 +64,8 @@ Proposed Second Milestone
 
 - Add `bindings.cpp` and start moving pybind11 registration (leave algorithms in `diffvg.cpp`)
 - Add `DIFFVG_SANITIZE` CMake option for host-only sanitizers (off by default)
+
+Note: Bézier Splatting implementation tasks are tracked in `docs/bezier_splatting_todo.md`. This file only keeps prep work (scaffolding) needed to enable that backend.
 
 Notes / Risks
 

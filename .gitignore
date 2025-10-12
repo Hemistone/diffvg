@@ -10,3 +10,4 @@ dist
 .venv_test
 .DS_Store
 results
+papers
