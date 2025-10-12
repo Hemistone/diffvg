@@ -1,16 +1,30 @@
+"""Write pydiffvg scenes to an SVG file.
+
+The function here emits a minimal subset of SVG sufficient for our shapes.
+"""
+
+from typing import List
 import torch
 import pydiffvg
 import xml.etree.ElementTree as etree
 from xml.dom import minidom
 
-def prettify(elem):
-    """Return a pretty-printed XML string for the Element.
-    """
+
+def prettify(elem) -> str:
+    """Return a pretty-printed XML string for the Element."""
     rough_string = etree.tostring(elem, 'utf-8')
     reparsed = minidom.parseString(rough_string)
     return reparsed.toprettyxml(indent="  ")
 
-def save_svg(filename, width, height, shapes, shape_groups, use_gamma = False):
+
+def save_svg(
+    filename: str,
+    width: int,
+    height: int,
+    shapes: List[object],
+    shape_groups: List[object],
+    use_gamma: bool = False,
+) -> None:
     root = etree.Element('svg')
     root.set('version', '1.1')
     root.set('xmlns', 'http://www.w3.org/2000/svg')

@@ -54,10 +54,11 @@ def main(args):
         video_bitrate="20M",
         results_root=Path("results") / "painterly_rendering",
     )
+    device_str = str(pydiffvg.get_device())
     log_run_configuration(
         "painterly_rendering",
         {
-            "device": "cuda" if use_gpu else "cpu",
+            "device": device_str,
             "target": str(target_path),
             "canvas": f"{canvas_width}x{canvas_height}",
             "paths": num_paths,

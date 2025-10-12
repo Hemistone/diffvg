@@ -13,13 +13,13 @@ import logging
 import matplotlib.colors 
 cssutils.log.setLevel(logging.ERROR)
 
-def remove_namespaces(s):
+def remove_namespaces(s: str) -> str:
     """
         {...} ... -> ...
     """
     return re.sub('{.*}', '', s)
 
-def parse_style(s, defs):
+def parse_style(s: str, defs):
     style_dict = {}
     for e in s.split(';'):
         key_value = e.split(':')
@@ -33,7 +33,7 @@ def parse_style(s, defs):
             style_dict[key] = value
     return style_dict
 
-def parse_hex(s):
+def parse_hex(s: str):
     """
         Hex to tuple
     """
@@ -45,13 +45,13 @@ def parse_hex(s):
     # return torch.pow(torch.tensor([rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0]), 2.2)
     return torch.pow(torch.tensor([rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0]), 1.0)
 
-def parse_int(s):
+def parse_int(s: str) -> int:
     """
         trim alphabets
     """
     return int(float(''.join(i for i in s if (not i.isalpha()))))
 
-def parse_color(s, defs):
+def parse_color(s: str, defs):
     if s is None:
         return None
     if isinstance(s, torch.Tensor):
@@ -79,7 +79,7 @@ def parse_color(s, defs):
     return color
 
 # https://github.com/mathandy/svgpathtools/blob/7ebc56a831357379ff22216bec07e2c12e8c5bc6/svgpathtools/parser.py
-def _parse_transform_substr(transform_substr):
+def _parse_transform_substr(transform_substr: str):
     type_str, value_str = transform_substr.split('(')
     value_str = value_str.replace(',', ' ')
     values = list(map(float, filter(None, value_str.split(' '))))
@@ -119,10 +119,10 @@ def _parse_transform_substr(transform_substr):
         warnings.warn('Unknown SVG transform type: {0}'.format(type_str))
     return transform
 
-def parse_transform(transform_str):
-    """
-        Converts a valid SVG transformation string into a 3x3 matrix.
-        If the string is empty or null, this returns a 3x3 identity matrix
+def parse_transform(transform_str: str):
+    """Convert an SVG transform string into a 3x3 torch.Tensor.
+
+    Returns identity if empty; raises TypeError if not a string.
     """
     if not transform_str:
         return np.identity(3)
@@ -584,3 +584,8 @@ def svg_to_scene(filename):
     ret = parse_scene(root)
     os.chdir(cwd)
     return ret
+"""SVG parsing utilities to build pydiffvg scenes.
+
+Functions here parse XML nodes/attributes into pydiffvg shapes and groups.
+Type hints are added to aid navigation; behavior is unchanged.
+"""

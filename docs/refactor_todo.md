@@ -34,12 +34,13 @@ Acceptance checks per change
 
 Backlog (small, incremental tasks)
 
-- [todo] Add `docs/refactor_todo.md` (this file) and keep updated
+- [done] Add `docs/refactor_todo.md` (this file) and keep updated
 - [todo] Document stable public API surface in `pydiffvg/__init__.py`
 - [todo] Add `__all__` and avoid wildcard re-exports in package modules
-- [todo] Factor `RenderFunction.serialize_scene` into `pydiffvg/serialization.py`
-- [todo] Add docstrings + type hints for `device.py`, `pixel_filter.py`, `shape.py`, `color.py`
-- [todo] Ensure all `apps/*` use `pydiffvg.get_device()` consistently
+- [done] Factor `RenderFunction.serialize_scene` into `pydiffvg/serialization.py`
+- [done] Add docstrings + type hints for `device.py`, `pixel_filter.py`, `shape.py`, `color.py`
+- [done] Add docstrings/types for `image.py`, `save_svg.py`, and key functions in `parse_svg.py`
+- [doing] Ensure `apps/single_*` use `pydiffvg.get_device()` consistently (majority updated)
 - [todo] Introduce `pydiffvg/dev.py` for debug toggles (e.g., `set_print_timing`), unify usage
 - [todo] Add a tiny smoke script for both CPU/CUDA: `scripts/test_render_paths.py` (no gradients)
 - [todo] CMake: add optional `-fsanitize=address,undefined` for host files via `-DDIFFVG_SANITIZE=ON`
@@ -53,9 +54,9 @@ Backlog (small, incremental tasks)
 
 Proposed First Milestone (Week 1)
 
-- Extract scene serialization (no behavior change)
-- Add typing/docstrings in core Python modules (device, filter, shapes)
-- Normalize device usage in examples
+- Extract scene serialization (no behavior change) — done
+- Add typing/docstrings in core Python modules (device, filter, shapes, color; plus image/save_svg/parse_svg) — done
+- Normalize device usage in examples — doing
 
 Proposed Second Milestone
 
@@ -73,4 +74,3 @@ Status Legend
 - todo: not started
 - doing: in progress
 - done: merged and verified via examples
-
