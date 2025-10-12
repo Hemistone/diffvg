@@ -31,8 +31,11 @@ namespace py = pybind11;
 namespace diffvg_bindings {
     void register_math(py::module_ &m);
     void register_ptr(py::module_ &m);
-    void register_filter(py::module_ &m);
     void register_color(py::module_ &m);
+    void register_shapes(py::module_ &m);
+    void register_shape_group(py::module_ &m);
+    void register_filter(py::module_ &m);
+    void register_scene(py::module_ &m);
 }
 
 static inline bool diffvg_disable_gpu_sort() {
@@ -1690,88 +1693,14 @@ PYBIND11_MODULE(diffvg, m) {
     m.def("is_cuda_compiled", []() { return diffvg_compiled_with_cuda; },
           "Return True if diffvg was built with CUDA support.");
 
-    // Vectors are registered from bindings.cpp to keep this TU smaller
+    // Register python bindings in smaller chunks to keep this TU manageable.
     diffvg_bindings::register_math(m);
     diffvg_bindings::register_ptr(m);
-
-    py::enum_<ShapeType>(m, "ShapeType")
-        .value("circle", ShapeType::Circle)
-        .value("ellipse", ShapeType::Ellipse)
-        .value("path", ShapeType::Path)
-        .value("rect", ShapeType::Rect);
-
-    py::class_<Circle>(m, "Circle")
-        .def(py::init<float, Vector2f>())
-        .def("get_ptr", &Circle::get_ptr)
-        .def_readonly("radius", &Circle::radius)
-        .def_readonly("center", &Circle::center);
-
-    py::class_<Ellipse>(m, "Ellipse")
-        .def(py::init<Vector2f, Vector2f>())
-        .def("get_ptr", &Ellipse::get_ptr)
-        .def_readonly("radius", &Ellipse::radius)
-        .def_readonly("center", &Ellipse::center);
-
-    py::class_<Path>(m, "Path")
-        .def(py::init<ptr<int>, ptr<float>, ptr<float>, int, int, bool, bool>())
-        .def("get_ptr", &Path::get_ptr)
-        .def("has_thickness", &Path::has_thickness)
-        .def("copy_to", &Path::copy_to)
-        .def_readonly("num_points", &Path::num_points);
-
-    py::class_<Rect>(m, "Rect")
-        .def(py::init<Vector2f, Vector2f>())
-        .def("get_ptr", &Rect::get_ptr)
-        .def_readonly("p_min", &Rect::p_min)
-        .def_readonly("p_max", &Rect::p_max);
-
     diffvg_bindings::register_color(m);
-
-    py::class_<Shape>(m, "Shape")
-        .def(py::init<ShapeType, ptr<void>, float>())
-        .def("as_circle", &Shape::as_circle)
-        .def("as_ellipse", &Shape::as_ellipse)
-        .def("as_path", &Shape::as_path)
-        .def("as_rect", &Shape::as_rect)
-        .def_readonly("type", &Shape::type)
-        .def_readonly("stroke_width", &Shape::stroke_width);
-
-    py::class_<ShapeGroup>(m, "ShapeGroup")
-        .def(py::init<ptr<int>,
-                      int,
-                      ColorType,
-                      ptr<void>,
-                      ColorType,
-                      ptr<void>,
-                      bool,
-                      ptr<float>>())
-        .def("fill_color_as_constant", &ShapeGroup::fill_color_as_constant)
-        .def("fill_color_as_linear_gradient", &ShapeGroup::fill_color_as_linear_gradient)
-        .def("fill_color_as_radial_gradient", &ShapeGroup::fill_color_as_radial_gradient)
-        .def("stroke_color_as_constant", &ShapeGroup::stroke_color_as_constant)
-        .def("stroke_color_as_linear_gradient", &ShapeGroup::stroke_color_as_linear_gradient)
-        .def("stroke_color_as_radial_gradient", &ShapeGroup::fill_color_as_radial_gradient)
-        .def("has_fill_color", &ShapeGroup::has_fill_color)
-        .def("has_stroke_color", &ShapeGroup::has_stroke_color)
-        .def("copy_to", &ShapeGroup::copy_to)
-        .def_readonly("fill_color_type", &ShapeGroup::fill_color_type)
-        .def_readonly("stroke_color_type", &ShapeGroup::stroke_color_type);
-
+    diffvg_bindings::register_shapes(m);
+    diffvg_bindings::register_shape_group(m);
     diffvg_bindings::register_filter(m);
-
-    py::class_<Scene, std::shared_ptr<Scene>>(m, "Scene")
-        .def(py::init<int,
-                      int,
-                      const std::vector<const Shape*> &,
-                      const std::vector<const ShapeGroup*> &,
-                      const Filter &,
-                      bool,
-                      int>())
-        .def("get_d_shape", &Scene::get_d_shape)
-        .def("get_d_shape_group", &Scene::get_d_shape_group)
-        .def("get_d_filter_radius", &Scene::get_d_filter_radius)
-        .def_readonly("num_shapes", &Scene::num_shapes)
-        .def_readonly("num_shape_groups", &Scene::num_shape_groups);
+    diffvg_bindings::register_scene(m);
 
     m.def("render", &render, "");
 }

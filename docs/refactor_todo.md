@@ -49,7 +49,7 @@ Backlog (small, incremental tasks)
 - [done] Introduce `pydiffvg/dev.py` for debug toggles (e.g., `set_print_timing`) and wire into renderer
 - [todo] Add a tiny smoke script for both CPU/CUDA: `scripts/test_render_paths.py` (no gradients)
 - [done] CMake: add optional `-fsanitize=address,undefined` for host files via `-DDIFFVG_SANITIZE=ON`
-- [doing] C++: create `bindings.cpp` and start gradual migration of pybind11 binds from `diffvg.cpp` (moved Vector2f/3f/4f, ptr helpers, FilterType/Filter, ColorType + gradients)
+- [doing] C++: create `bindings.cpp` and start gradual migration of pybind11 binds from `diffvg.cpp` (moved Vector2f/3f/4f, ptr helpers, FilterType/Filter, ColorType/gradients, Shape/ShapeGroup, Scene)
 - [todo] C++: extract GPU sort dispatch; ensure CPU fallback without Thrust device when `DIFFVG_DISABLE_GPU_SORT=1`
 - [todo] C++: add lightweight `public_api.h` exposing only functions used by bindings
 - [done] Python: introduce a `Renderer` class (preallocation, reusable scene) — design stub only
