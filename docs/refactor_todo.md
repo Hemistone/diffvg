@@ -1,0 +1,76 @@
+# Refactor Plan & TODO (diffvg modern fork)
+
+Goals
+
+- Precise: tight, well-defined module boundaries and minimal public surface.
+- Concise: reduce monolithic modules; remove redundancy and globals.
+- Expandable: enable future performance work (preallocation, profiling, CUDA/CPU parity) without large rewrites.
+
+Current Layout (quick map)
+
+- C++ core in repo root: `diffvg.cpp` (large), `scene.cpp` (CUDA TU), headers under root.
+- Python API in `pydiffvg/`: rendering (`render_pytorch.py`), shapes/colors/utilities, SVG parse/save, device control.
+- Examples in `apps/`; convenience scripts in `scripts/` and Makefile targets for smoke tests.
+- Build via scikit-build/pyproject or `setup.py`; CUDA optional; Thrust from CUDA Toolkit.
+
+Principles
+
+- Keep behavior identical per step; prefer pure move/extract refactors.
+- Land small, verifiable patches; run `make dev-check` (CPU) and a CUDA example when available.
+- Avoid large file moves that disrupt blame unless necessary; introduce new files, then migrate callers.
+
+Phases (high level)
+
+1) Safety & DX polish (no behavior change)
+2) Python API boundary cleanup (smaller modules, typing)
+3) C++ bindings boundary cleanup (separate bindings vs. algorithms)
+4) Performance scaffolding (renderer object, preallocation hooks)
+
+Acceptance checks per change
+
+- `pip install .` succeeds (CPU and CUDA paths as applicable)
+- `make dev-check` passes; selected `apps/single_*.py` run as before
+- Diff in rendered images within tolerance for examples (manual/visual for now)
+
+Backlog (small, incremental tasks)
+
+- [todo] Add `docs/refactor_todo.md` (this file) and keep updated
+- [todo] Document stable public API surface in `pydiffvg/__init__.py`
+- [todo] Add `__all__` and avoid wildcard re-exports in package modules
+- [todo] Factor `RenderFunction.serialize_scene` into `pydiffvg/serialization.py`
+- [todo] Add docstrings + type hints for `device.py`, `pixel_filter.py`, `shape.py`, `color.py`
+- [todo] Ensure all `apps/*` use `pydiffvg.get_device()` consistently
+- [todo] Introduce `pydiffvg/dev.py` for debug toggles (e.g., `set_print_timing`), unify usage
+- [todo] Add a tiny smoke script for both CPU/CUDA: `scripts/test_render_paths.py` (no gradients)
+- [todo] CMake: add optional `-fsanitize=address,undefined` for host files via `-DDIFFVG_SANITIZE=ON`
+- [todo] C++: create `bindings.cpp` and move pybind11 module definitions gradually from `diffvg.cpp`
+- [todo] C++: extract GPU sort dispatch; ensure CPU fallback without Thrust device when `DIFFVG_DISABLE_GPU_SORT=1`
+- [todo] C++: add lightweight `public_api.h` exposing only functions used by bindings
+- [todo] Python: introduce a `Renderer` class (preallocation, reusable scene) — design stub only
+- [todo] Add minimal perf harness under `apps/` to time color vs. sdf outputs
+- [todo] Improve error messages for non-closed paths with fill (actionable hints)
+- [todo] Add CONTRIBUTING notes for CPU vs CUDA builds and debugging tips
+
+Proposed First Milestone (Week 1)
+
+- Extract scene serialization (no behavior change)
+- Add typing/docstrings in core Python modules (device, filter, shapes)
+- Normalize device usage in examples
+
+Proposed Second Milestone
+
+- Add `bindings.cpp` and start moving pybind11 registration (leave algorithms in `diffvg.cpp`)
+- Add `DIFFVG_SANITIZE` CMake option for host-only sanitizers (off by default)
+
+Notes / Risks
+
+- Avoid touching `scene.cpp` CUDA kernel boundaries early; first isolate bindings.
+- Keep `render_pytorch.py` API untouched while extracting helpers; only internal imports change.
+- GPU + CUDA toolchain inconsistencies can cause segfault; keep `PYTHONDONTWRITEBYTECODE=1` in dev and clean caches on crash.
+
+Status Legend
+
+- todo: not started
+- doing: in progress
+- done: merged and verified via examples
+
