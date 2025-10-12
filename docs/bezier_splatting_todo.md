@@ -13,9 +13,9 @@ Phases
 
 0) Scaffold & Switches
 
-- [todo] Backend selector: `pydiffvg.set_backend('baseline'|'splat')`, `pydiffvg.get_backend()`, env `DIFFVG_BACKEND`
-- [todo] Backend registry: `pydiffvg/backends/registry.py` (internal), register baseline + splat
-- [todo] Define backend_config (K, R, ρ, tile size, depth policy), defaults + env overrides
+- [done] Backend selector: `pydiffvg.set_backend('baseline'|'splat')`, `pydiffvg.get_backend()`, env `DIFFVG_BACKEND`
+- [done] Backend registry: `pydiffvg/backends/registry.py` (internal), register baseline + splat
+- [done] Define backend_config (K, R, ρ, tile size, depth policy), defaults + env overrides
 
 1) Forward (Open Strokes)
 
@@ -59,4 +59,3 @@ Risks & Mitigations
 - Approximation artifacts at edges: document; increase K/R near high curvature; clamp σ
 - Memory growth from many splats: cap per-tile splats; adapt K/R; shard tiles if needed
 - CPU-only runs: keep slow Torch CPU path for tests; don’t block baseline
-

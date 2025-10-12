@@ -27,6 +27,10 @@ Phases (high level)
 4) Performance scaffolding (renderer object, preallocation hooks)
 5) Backend abstraction for new renderers (Bezier Splatting)
 
+Milestone naming
+
+- To avoid confusion, we’ll refer to the backend scaffolding work as “Milestone 2A: Backend scaffold (selector/registry + Renderer stub)”, which bridges Phase 4 → 5. The actual Bézier Splatting implementation remains tracked in `docs/bezier_splatting_todo.md`.
+
 Acceptance checks per change
 
 - `pip install .` succeeds (CPU and CUDA paths as applicable)
@@ -48,7 +52,7 @@ Backlog (small, incremental tasks)
 - [todo] C++: create `bindings.cpp` and move pybind11 module definitions gradually from `diffvg.cpp`
 - [todo] C++: extract GPU sort dispatch; ensure CPU fallback without Thrust device when `DIFFVG_DISABLE_GPU_SORT=1`
 - [todo] C++: add lightweight `public_api.h` exposing only functions used by bindings
-- [todo] Python: introduce a `Renderer` class (preallocation, reusable scene) — design stub only
+- [done] Python: introduce a `Renderer` class (preallocation, reusable scene) — design stub only
 - [todo] Add minimal perf harness under `apps/` to time color vs. sdf outputs
 - [todo] Improve error messages for non-closed paths with fill (actionable hints)
 - [todo] Add CONTRIBUTING notes for CPU vs CUDA builds and debugging tips
@@ -62,8 +66,9 @@ Proposed First Milestone (Week 1)
 
 Proposed Second Milestone
 
-- Add `bindings.cpp` and start moving pybind11 registration (leave algorithms in `diffvg.cpp`)
-- Add `DIFFVG_SANITIZE` CMake option for host-only sanitizers (off by default)
+- 2A: Backend scaffold — add backend selector/registry and minimal `Renderer` stub — done (see `pydiffvg/backend.py`, `pydiffvg/backends/registry.py`, `pydiffvg/renderer.py`)
+- 2B: Add `bindings.cpp` and start moving pybind11 registration (leave algorithms in `diffvg.cpp`)
+- 2B: Add `DIFFVG_SANITIZE` CMake option for host-only sanitizers (off by default)
 
 Note: Bézier Splatting implementation tasks are tracked in `docs/bezier_splatting_todo.md`. This file only keeps prep work (scaffolding) needed to enable that backend.
 
