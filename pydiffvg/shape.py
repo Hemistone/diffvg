@@ -192,3 +192,13 @@ def from_svg_path(path_str: str, shape_to_canvas: torch.Tensor = torch.eye(3), f
         points = points[:, :2].contiguous()
         ret_paths.append(Path(torch.tensor(num_control_points), points, subpath.isclosed()))
     return ret_paths
+
+__all__ = [
+    "Circle",
+    "Ellipse",
+    "Path",
+    "Polygon",
+    "Rect",
+    "ShapeGroup",
+    "from_svg_path",
+]

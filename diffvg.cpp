@@ -27,6 +27,9 @@
 
 namespace py = pybind11;
 
+// Forward registration from bindings.cpp (incremental migration)
+namespace diffvg_bindings { void register_math(py::module_ &m); }
+
 static inline bool diffvg_disable_gpu_sort() {
     const char *env = std::getenv("DIFFVG_DISABLE_GPU_SORT");
     if (!env) return false;
@@ -1690,23 +1693,8 @@ PYBIND11_MODULE(diffvg, m) {
     py::class_<ptr<int>>(m, "int_ptr")
         .def(py::init<std::size_t>());
 
-    py::class_<Vector2f>(m, "Vector2f")
-        .def(py::init<float, float>())
-        .def_readwrite("x", &Vector2f::x)
-        .def_readwrite("y", &Vector2f::y);
-
-    py::class_<Vector3f>(m, "Vector3f")
-        .def(py::init<float, float, float>())
-        .def_readwrite("x", &Vector3f::x)
-        .def_readwrite("y", &Vector3f::y)
-        .def_readwrite("z", &Vector3f::z);
-
-    py::class_<Vector4f>(m, "Vector4f")
-        .def(py::init<float, float, float, float>())
-        .def_readwrite("x", &Vector4f::x)
-        .def_readwrite("y", &Vector4f::y)
-        .def_readwrite("z", &Vector4f::z)
-        .def_readwrite("w", &Vector4f::w);
+    // Vectors are registered from bindings.cpp to keep this TU smaller
+    diffvg_bindings::register_math(m);
 
     py::enum_<ShapeType>(m, "ShapeType")
         .value("circle", ShapeType::Circle)

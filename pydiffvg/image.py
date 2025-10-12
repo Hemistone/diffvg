@@ -49,3 +49,5 @@ def imwrite(
         img=np.expand_dims(img,2)
     img[:, :, :3] = np.power(img[:, :, :3], 1.0/gamma)
     skimage.io.imsave(filename, (img * 255).astype(np.uint8))
+
+__all__ = ["imwrite"]
