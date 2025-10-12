@@ -15,10 +15,11 @@ def main() -> None:
     learning_rate = 1e-2
 
     run = create_run_context("single_open_curve", num_iterations, video_fps=24)
+    device_str = str(pydiffvg.get_device())
     log_run_configuration(
         "single_open_curve",
         {
-            "device": "cuda" if use_gpu else "cpu",
+            "device": device_str,
             "canvas": f"{canvas_width}x{canvas_height}",
             "samples": f"{num_samples[0]}x{num_samples[1]}",
             "iterations": num_iterations,

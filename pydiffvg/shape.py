@@ -1,66 +1,88 @@
+"""Shape parameter containers for pydiffvg.
+
+Each class is a lightweight holder consumed by the serialization pipeline.
+"""
+
+import math
 import torch
 import svgpathtools
-import math
+from typing import Sequence
 
 class Circle:
-    def __init__(self, radius, center, stroke_width = torch.tensor(1.0), id = ''):
-        self.radius = radius
-        self.center = center
-        self.stroke_width = stroke_width
-        self.id = id
+    """Circle shape."""
+
+    def __init__(self, radius: torch.Tensor, center: torch.Tensor, stroke_width: torch.Tensor = torch.tensor(1.0), id: str = '') -> None:
+        self.radius: torch.Tensor = radius
+        self.center: torch.Tensor = center
+        self.stroke_width: torch.Tensor = stroke_width
+        self.id: str = id
 
 class Ellipse:
-    def __init__(self, radius, center, stroke_width = torch.tensor(1.0), id = ''):
-        self.radius = radius
-        self.center = center
-        self.stroke_width = stroke_width
-        self.id = id
+    """Ellipse shape."""
+
+    def __init__(self, radius: torch.Tensor, center: torch.Tensor, stroke_width: torch.Tensor = torch.tensor(1.0), id: str = '') -> None:
+        self.radius: torch.Tensor = radius
+        self.center: torch.Tensor = center
+        self.stroke_width: torch.Tensor = stroke_width
+        self.id: str = id
 
 class Path:
-    def __init__(self,
-                 num_control_points,
-                 points,
-                 is_closed,
-                 stroke_width = torch.tensor(1.0),
-                 id = '',
-                 use_distance_approx = False):
-        self.num_control_points = num_control_points
-        self.points = points
-        self.is_closed = is_closed
-        self.stroke_width = stroke_width
-        self.id = id
-        self.use_distance_approx = use_distance_approx
+    """Bezier path shape (may be closed or open)."""
+
+    def __init__(
+        self,
+        num_control_points: torch.Tensor,
+        points: torch.Tensor,
+        is_closed: bool,
+        stroke_width: torch.Tensor = torch.tensor(1.0),
+        id: str = '',
+        use_distance_approx: bool = False,
+    ) -> None:
+        self.num_control_points: torch.Tensor = num_control_points
+        self.points: torch.Tensor = points
+        self.is_closed: bool = is_closed
+        self.stroke_width: torch.Tensor = stroke_width
+        self.id: str = id
+        self.use_distance_approx: bool = use_distance_approx
 
 class Polygon:
-    def __init__(self, points, is_closed, stroke_width = torch.tensor(1.0), id = ''):
-        self.points = points
-        self.is_closed = is_closed
-        self.stroke_width = stroke_width
-        self.id = id
+    """Polygon shape (treated as a polyline if not closed)."""
+
+    def __init__(self, points: torch.Tensor, is_closed: bool, stroke_width: torch.Tensor = torch.tensor(1.0), id: str = '') -> None:
+        self.points: torch.Tensor = points
+        self.is_closed: bool = is_closed
+        self.stroke_width: torch.Tensor = stroke_width
+        self.id: str = id
 
 class Rect:
-    def __init__(self, p_min, p_max, stroke_width = torch.tensor(1.0), id = ''):
-        self.p_min = p_min
-        self.p_max = p_max
-        self.stroke_width = stroke_width
-        self.id = id
+    """Axis-aligned rectangle."""
+
+    def __init__(self, p_min: torch.Tensor, p_max: torch.Tensor, stroke_width: torch.Tensor = torch.tensor(1.0), id: str = '') -> None:
+        self.p_min: torch.Tensor = p_min
+        self.p_max: torch.Tensor = p_max
+        self.stroke_width: torch.Tensor = stroke_width
+        self.id: str = id
 
 class ShapeGroup:
-    def __init__(self,
-                 shape_ids,
-                 fill_color,
-                 use_even_odd_rule = True,
-                 stroke_color = None,
-                 shape_to_canvas = torch.eye(3),
-                 id = ''):
-        self.shape_ids = shape_ids
-        self.fill_color = fill_color
-        self.use_even_odd_rule = use_even_odd_rule
-        self.stroke_color = stroke_color
-        self.shape_to_canvas = shape_to_canvas
-        self.id = id
+    """Grouping of shapes with shared fill/stroke and transform."""
 
-def from_svg_path(path_str, shape_to_canvas = torch.eye(3), force_close = False):
+    def __init__(
+        self,
+        shape_ids: torch.Tensor,
+        fill_color,
+        use_even_odd_rule: bool = True,
+        stroke_color=None,
+        shape_to_canvas: torch.Tensor = torch.eye(3),
+        id: str = '',
+    ) -> None:
+        self.shape_ids: torch.Tensor = shape_ids
+        self.fill_color = fill_color
+        self.use_even_odd_rule: bool = use_even_odd_rule
+        self.stroke_color = stroke_color
+        self.shape_to_canvas: torch.Tensor = shape_to_canvas
+        self.id: str = id
+
+def from_svg_path(path_str: str, shape_to_canvas: torch.Tensor = torch.eye(3), force_close: bool = False):
     path = svgpathtools.parse_path(path_str)
     if len(path) == 0:
         return []
