@@ -94,8 +94,8 @@ Objective: retire the 1,600-line `pydiffvg/optimize_svg.py` in favor of a compos
   Capture current behavior before moving code. The CPU-only smoke script `scripts/test_optimize_svg.py` (run via `python scripts/test_optimize_svg.py`) optimizes `apps/imgs/note_small.svg` toward a white target for five Adam steps on CPU and asserts the MSE drops by ≥0.005. Invariants: rely on default `SvgOptimizationSettings`, disable background optimization, and expect loss monotonicity when seeds are `[0..n)`. Document additional CLI entrypoints here once new front-ends appear.
 - [done] Stage 1 — Package skeleton & settings extraction  
   Introduced `pydiffvg/optimize/__init__.py` and moved `SvgOptimizationSettings` (plus JSON helpers) into `pydiffvg/optimize/settings.py`, with `optimize_svg.py` re-exporting the class for compatibility. The script `scripts/test_optimize_settings.py` covers serialization, overrides, and round-trip save/load behavior.
-- [todo] Stage 2 — Transform utilities module  
-  Relocate `TransformTools` and matrix helpers into `pydiffvg/optimize/transforms.py` with numpy/torch type hints. Replace intra-file references with explicit imports and ensure conversion helpers remain free of side effects.
+- [done] Stage 2 — Transform utilities module  
+  Relocated `TransformTools` (including decomposition helpers) into `pydiffvg/optimize/transforms.py` and aliased it back through `OptimizableSvg.TransformTools` for compatibility. Added a re-export via `pydiffvg.optimize` and verified the Stage 0/1 smoke tests still pass.
 - [todo] Stage 3 — Scene description data models  
   Extract `OptimizableSvg` data structures (element representations, attribute tracking) into `pydiffvg/optimize/scene_graph.py`. Introduce typed containers (`NamedTuple`/`dataclass`) for circles, paths, gradients, and factor mutation logic away from parsing.
 - [todo] Stage 4 — Parser & writer separation  
