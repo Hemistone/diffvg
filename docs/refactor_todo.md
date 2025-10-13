@@ -102,5 +102,5 @@ Objective: retire the 1,600-line `pydiffvg/optimize_svg.py` in favor of a compos
   Extracted the parsing logic into `SvgParserMixin` (`pydiffvg/optimize/parser.py`) and writing helpers into `SvgWriterMixin` (`pydiffvg/optimize/writer.py`). `OptimizableSvg` now inherits these mixins, isolating the XML/CSS dependencies from the core class while preserving behavior. Existing smoke tests remain green.
 - [done] Stage 5 — Optimization driver orchestration  
   Added `SvgOptimizationDriver` under `pydiffvg/optimize/driver.py` to wrap `OptimizableSvg` with a small optimization loop (seed/scale schedules, callbacks) while keeping the original API intact. The driver exposes rendering/step helpers and returns per-iteration loss history for downstream integrations.
-- [todo] Stage 6 — Cleanup & migration  
-  Once stages 1–5 land, reduce `pydiffvg/optimize_svg.py` to deprecated shims, update documentation/examples to import from the new package, and run full CPU + CUDA smoke tests (apps and optimization script) before removing the monolith.
+- [done] Stage 6 — Cleanup & migration  
+  `pydiffvg/optimize_svg.py` now serves as a deprecated shim that re-exports the new modules under `pydiffvg.optimize`. All core logic lives in `pydiffvg/optimize/core.py`, parsing/writing resides in mixins, and the smoke scripts (`scripts/test_optimize_svg.py`, `scripts/test_optimize_driver.py`) cover the new entry points.

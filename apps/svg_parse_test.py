@@ -1,10 +1,8 @@
 import pydiffvg
-import sys
 import numpy as np
 import torch
-sys.path.append("../pydiffvg")
 
-from optimize_svg import OptimizableSvg
+from pydiffvg.optimize import OptimizableSvg
 
 pydiffvg.set_use_gpu(False)
 
