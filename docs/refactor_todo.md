@@ -100,7 +100,7 @@ Objective: retire the 1,600-line `pydiffvg/optimize_svg.py` in favor of a compos
   Moved the scene graph node classes (`SvgNode`, `PathNode`, etc.) into `pydiffvg/optimize/scene_graph.py`, wired them via a configure hook, and reattached them to `OptimizableSvg` to preserve the public surface. Existing parse/build logic now depends on the shared module, keeping behavior identical while isolating the data structures for future refinement.
 - [done] Stage 4 — Parser & writer separation  
   Extracted the parsing logic into `SvgParserMixin` (`pydiffvg/optimize/parser.py`) and writing helpers into `SvgWriterMixin` (`pydiffvg/optimize/writer.py`). `OptimizableSvg` now inherits these mixins, isolating the XML/CSS dependencies from the core class while preserving behavior. Existing smoke tests remain green.
-- [todo] Stage 5 — Optimization driver orchestration  
-  Create `pydiffvg/optimize/driver.py` that wires settings, scene graph, and render steps. Keep CLI/backwards-compatible entrypoints in `optimize_svg.py` as thin facades until the end. Add logging hooks and surface a structured result object.
+- [done] Stage 5 — Optimization driver orchestration  
+  Added `SvgOptimizationDriver` under `pydiffvg/optimize/driver.py` to wrap `OptimizableSvg` with a small optimization loop (seed/scale schedules, callbacks) while keeping the original API intact. The driver exposes rendering/step helpers and returns per-iteration loss history for downstream integrations.
 - [todo] Stage 6 — Cleanup & migration  
   Once stages 1–5 land, reduce `pydiffvg/optimize_svg.py` to deprecated shims, update documentation/examples to import from the new package, and run full CPU + CUDA smoke tests (apps and optimization script) before removing the monolith.

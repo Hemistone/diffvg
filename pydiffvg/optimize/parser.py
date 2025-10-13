@@ -13,8 +13,6 @@ import xml.etree.ElementTree as etree
 
 import pydiffvg
 
-from .settings import SvgOptimizationSettings
-
 
 class SvgParserMixin:
     unit_dict = {

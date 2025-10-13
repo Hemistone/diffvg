@@ -17,12 +17,14 @@ from .scene_graph import (
 )
 from .parser import SvgParserMixin
 from .writer import SvgWriterMixin
+from .driver import SvgOptimizationDriver
 
 __all__ = [
     "SvgOptimizationSettings",
     "TransformTools",
     "SvgParserMixin",
     "SvgWriterMixin",
+    "SvgOptimizationDriver",
     "SvgNode",
     "GroupNode",
     "RootNode",
