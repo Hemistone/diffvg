@@ -50,6 +50,9 @@ if(DIFFVG_CUDA)
         message(WARNING "CUDA compiler not found. Building without CUDA support.")
         set(DIFFVG_CUDA OFF)
     else()
+        # Newer CMake releases default this to ON (CMP0146 NEW) which can make nvcc 12.x + GCC 12 segfault.
+        set(CMAKE_CUDA_FORWARD_UNKNOWN_TO_HOST_COMPILER OFF CACHE BOOL
+            "Do not forward unknown host flags to nvcc (stability workaround)" FORCE)
         message(STATUS "Build with CUDA support")
         enable_language(CUDA)
         # Prefer native CMake CUDA; require toolkit for cudart linkage

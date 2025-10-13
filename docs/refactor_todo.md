@@ -45,31 +45,32 @@ Backlog (small, incremental tasks)
 - [done] Factor `RenderFunction.serialize_scene` into `pydiffvg/serialization.py`
 - [done] Add docstrings + type hints for `device.py`, `pixel_filter.py`, `shape.py`, `color.py`
 - [done] Add docstrings/types for `image.py`, `save_svg.py`, and key functions in `parse_svg.py`
-- [doing] Ensure `apps/single_*` use `pydiffvg.get_device()` consistently (majority updated)
+- [done] Ensure `apps/single_*` use `pydiffvg.get_device()` consistently (majority updated)
 - [done] Introduce `pydiffvg/dev.py` for debug toggles (e.g., `set_print_timing`) and wire into renderer
-- [todo] Add a tiny smoke script for both CPU/CUDA: `scripts/test_render_paths.py` (no gradients)
+- [done] Add a tiny smoke script for both CPU/CUDA: `scripts/test_render_paths.py` (no gradients)
 - [done] CMake: add optional `-fsanitize=address,undefined` for host files via `-DDIFFVG_SANITIZE=ON`
-- [doing] C++: create `bindings.cpp` and start gradual migration of pybind11 binds from `diffvg.cpp` (moved Vector2f/3f/4f, ptr helpers, FilterType/Filter, ColorType/gradients, Shape/ShapeGroup, Scene)
+- [done] C++: create `bindings.cpp` and continue migrating pybind11 binds from `diffvg.cpp` (remaining enums/functions still inline)
 - [done] C++: split render host logic into `render.cpp` + `render_support.cpp` (keep each < 1k lines)
-- [todo] C++: extract GPU sort dispatch; ensure CPU fallback without Thrust device when `DIFFVG_DISABLE_GPU_SORT=1`
-- [todo] C++: add lightweight `public_api.h` exposing only functions used by bindings
+- [done] Build: remove vendored `pybind11` submodule; rely on external `pybind11>=3.0.1`
+- [done] C++: extract GPU sort dispatch; ensure CPU fallback without Thrust device when `DIFFVG_DISABLE_GPU_SORT=1`
+- [done] C++: add lightweight `public_api.h` exposing only functions used by bindings
 - [done] Python: introduce a `Renderer` class (preallocation, reusable scene) — design stub only
 - [done] Add minimal perf harness under `apps/` to time color vs. sdf outputs (`apps/perf_render_compare.py`)
-- [todo] Improve error messages for non-closed paths with fill (actionable hints)
-- [todo] Add CONTRIBUTING notes for CPU vs CUDA builds and debugging tips
+- [done] Improve error messages for non-closed paths with fill (actionable hints)
+- [done] Add CONTRIBUTING notes for CPU vs CUDA builds and debugging tips
 
 
 Proposed First Milestone (Week 1)
 
 - Extract scene serialization (no behavior change) — done
-- Add typing/docstrings in core Python modules (device, filter, shapes, color; plus image/save_svg/parse_svg) — done
-- Normalize device usage in examples — doing
+ - Add typing/docstrings in core Python modules (device, filter, shapes, color; plus image/save_svg/parse_svg) — done
+ - Normalize device usage in examples — done
 
 Proposed Second Milestone
 
 - 2A: Backend scaffold — add backend selector/registry and minimal `Renderer` stub — done (see `pydiffvg/backend.py`, `pydiffvg/backends/registry.py`, `pydiffvg/renderer.py`)
-- 2B: Add `bindings.cpp` and start moving pybind11 registration (leave algorithms in `diffvg.cpp`)
-- 2B: Add `DIFFVG_SANITIZE` CMake option for host-only sanitizers (off by default)
+- 2B: Add `bindings.cpp` and start moving pybind11 registration (leave algorithms in `diffvg.cpp`) — done
+- 2B: Add `DIFFVG_SANITIZE` CMake option for host-only sanitizers (off by default) — done
 
 Note: Bézier Splatting implementation tasks are tracked in `docs/bezier_splatting_todo.md`. This file only keeps prep work (scaffolding) needed to enable that backend.
 

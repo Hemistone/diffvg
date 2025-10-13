@@ -7,12 +7,7 @@
 #include <memory>
 #include <vector>
 
-#include "vector.h"
-#include "ptr.h"
-#include "filter.h"
-#include "color.h"
-#include "shape.h"
-#include "scene.h"
+#include "public_api.h"
 
 namespace py = pybind11;
 
@@ -166,6 +161,19 @@ void register_scene(py::module_ &m) {
         .def("get_d_filter_radius", &Scene::get_d_filter_radius)
         .def_readonly("num_shapes", &Scene::num_shapes)
         .def_readonly("num_shape_groups", &Scene::num_shape_groups);
+}
+
+void register_runtime(py::module_ &m) {
+#ifdef COMPILE_WITH_CUDA
+    constexpr bool diffvg_compiled_with_cuda = true;
+#else
+    constexpr bool diffvg_compiled_with_cuda = false;
+#endif
+
+    m.def("is_cuda_compiled",
+          []() { return diffvg_compiled_with_cuda; },
+          "Return True if diffvg was built with CUDA support.");
+    m.def("render", &render, "");
 }
 
 } // namespace diffvg_bindings

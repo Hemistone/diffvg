@@ -23,8 +23,19 @@
 #include <thrust/execution_policy.h>
 #include <thrust/sort.h>
 #include <thrust/device_ptr.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <utility>
+#include <vector>
+
+#ifdef COMPILE_WITH_CUDA
+#ifdef __cplusplus
+extern "C" void diffvg_gpu_sort_by_key_uint_uint(uint32_t *keys, int *vals, size_t n);
+#else
+extern void diffvg_gpu_sort_by_key_uint_uint(uint32_t *keys, int *vals, size_t n);
+#endif
+#endif
 
 
 static inline bool diffvg_disable_gpu_sort() {
@@ -34,14 +45,31 @@ static inline bool diffvg_disable_gpu_sort() {
     return env[0] != '\0' && !(env[0] == '0' && env[1] == '\0');
 }
 
+namespace {
+void sort_boundary_samples(uint32_t *keys, int *values, size_t count, bool use_gpu) {
+    if (!use_gpu || count == 0) {
+        return;
+    }
 #ifdef COMPILE_WITH_CUDA
-// Implemented in scene.cpp (compiled as a CUDA TU).
-#ifdef __cplusplus
-extern "C" void diffvg_gpu_sort_by_key_uint_uint(uint32_t* keys, int* vals, size_t n);
-#else
-extern void diffvg_gpu_sort_by_key_uint_uint(uint32_t* keys, int* vals, size_t n);
+    if (!diffvg_disable_gpu_sort()) {
+        diffvg_gpu_sort_by_key_uint_uint(keys, values, count);
+        return;
+    }
 #endif
-#endif
+    // Fallback to host-side sort (unified memory makes this safe).
+    std::vector<std::pair<uint32_t, int>> pairs(count);
+    for (size_t i = 0; i < count; ++i) {
+        pairs[i] = {keys[i], values[i]};
+    }
+    std::stable_sort(pairs.begin(), pairs.end(), [](const auto &lhs, const auto &rhs) {
+        return lhs.first < rhs.first;
+    });
+    for (size_t i = 0; i < count; ++i) {
+        keys[i] = pairs[i].first;
+        values[i] = pairs[i].second;
+    }
+}
+} // namespace
 
 struct Command {
     int shape_group_id;
@@ -534,16 +562,7 @@ void render(std::shared_ptr<Scene> scene,
             boundary_ids,
             morton_codes
         }, num_samples, scene->use_gpu);
-        if (scene->use_gpu) {
-#ifdef COMPILE_WITH_CUDA
-            if (!diffvg_disable_gpu_sort()) {
-                diffvg_gpu_sort_by_key_uint_uint(morton_codes, boundary_ids, num_samples);
-            }
-#endif
-        } else {
-            // Don't need to sort for CPU, we are not using SIMD hardware anyway.
-            // thrust::sort_by_key(thrust::host, morton_codes, morton_codes + num_samples, boundary_ids);
-        }
+        sort_boundary_samples(morton_codes, boundary_ids, num_samples, scene->use_gpu);
         parallel_for(render_edge_kernel{
             get_scene_data(*scene.get()),
             background_image.get(),

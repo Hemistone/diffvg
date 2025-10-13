@@ -93,9 +93,10 @@ def serialize_scene(
         else:
             args.append(shape.stroke_width.cpu())
 
-    for shape_group in shape_groups:
+    for group_index, shape_group in enumerate(shape_groups):
         assert shape_group.shape_ids.is_contiguous()
-        args.append(shape_group.shape_ids.to(torch.int32).cpu())
+        shape_indices = shape_group.shape_ids.to(torch.int32).cpu()
+        args.append(shape_indices)
 
         # Fill color
         if shape_group.fill_color is None:
@@ -125,7 +126,19 @@ def serialize_scene(
             args.append(shape_group.fill_color.offsets.cpu())
             args.append(shape_group.fill_color.stop_colors.cpu())
 
-        # Warn on non-closed paths under fill is handled in caller environment; kept parity
+        if shape_group.fill_color is not None:
+            for shape_idx in shape_indices.tolist():
+                shape = shapes[shape_idx]
+                is_open_path = (
+                    isinstance(shape, Path) or isinstance(shape, Polygon)
+                ) and not shape.is_closed
+                if is_open_path:
+                    group_label = shape_group.id or f"group[{group_index}]"
+                    shape_label = getattr(shape, "id", "") or f"shape[{shape_idx}]"
+                    raise ValueError(
+                        f"ShapeGroup {group_label} applies a fill color to open path {shape_label}. "
+                        "Close the path (`is_closed=True`) or drop the fill before rendering."
+                    )
 
         # Stroke color
         if shape_group.stroke_color is None:

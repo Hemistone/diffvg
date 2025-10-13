@@ -2,6 +2,7 @@
 
 #include "diffvg.h"
 #include "atomic.h"
+#include <cassert>
 
 enum class FilterType {
     Box,

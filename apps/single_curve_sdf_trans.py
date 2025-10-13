@@ -3,8 +3,14 @@ import torch
 import skimage
 import numpy as np
 
-# Use GPU if available
-pydiffvg.set_use_gpu(torch.cuda.is_available())
+# Use GPU if available and log via shared device helper for consistency.
+use_gpu = torch.cuda.is_available()
+pydiffvg.set_use_gpu(use_gpu)
+print("[config] single_curve_sdf_trans")
+print(f"[config] device: {pydiffvg.get_device()}")
+print("[config] samples: 1x1 (sdf)")
+print("[config] note: renders + visualizes finite differences")
+print("[config] --")
 
 canvas_width, canvas_height = 256, 256
 num_control_points = torch.tensor([2])
