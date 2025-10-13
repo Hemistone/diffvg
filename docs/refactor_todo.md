@@ -96,10 +96,10 @@ Objective: retire the 1,600-line `pydiffvg/optimize_svg.py` in favor of a compos
   Introduced `pydiffvg/optimize/__init__.py` and moved `SvgOptimizationSettings` (plus JSON helpers) into `pydiffvg/optimize/settings.py`, with `optimize_svg.py` re-exporting the class for compatibility. The script `scripts/test_optimize_settings.py` covers serialization, overrides, and round-trip save/load behavior.
 - [done] Stage 2 — Transform utilities module  
   Relocated `TransformTools` (including decomposition helpers) into `pydiffvg/optimize/transforms.py` and aliased it back through `OptimizableSvg.TransformTools` for compatibility. Added a re-export via `pydiffvg.optimize` and verified the Stage 0/1 smoke tests still pass.
-- [todo] Stage 3 — Scene description data models  
-  Extract `OptimizableSvg` data structures (element representations, attribute tracking) into `pydiffvg/optimize/scene_graph.py`. Introduce typed containers (`NamedTuple`/`dataclass`) for circles, paths, gradients, and factor mutation logic away from parsing.
-- [todo] Stage 4 — Parser & writer separation  
-  Split XML/CSS parsing into `pydiffvg/optimize/parser.py` and serialization into `pydiffvg/optimize/writer.py`. Maintain deterministic ordering, isolate cssutils usage, and add localized tests that round-trip a small SVG fixture.
+- [done] Stage 3 — Scene description data models  
+  Moved the scene graph node classes (`SvgNode`, `PathNode`, etc.) into `pydiffvg/optimize/scene_graph.py`, wired them via a configure hook, and reattached them to `OptimizableSvg` to preserve the public surface. Existing parse/build logic now depends on the shared module, keeping behavior identical while isolating the data structures for future refinement.
+- [done] Stage 4 — Parser & writer separation  
+  Extracted the parsing logic into `SvgParserMixin` (`pydiffvg/optimize/parser.py`) and writing helpers into `SvgWriterMixin` (`pydiffvg/optimize/writer.py`). `OptimizableSvg` now inherits these mixins, isolating the XML/CSS dependencies from the core class while preserving behavior. Existing smoke tests remain green.
 - [todo] Stage 5 — Optimization driver orchestration  
   Create `pydiffvg/optimize/driver.py` that wires settings, scene graph, and render steps. Keep CLI/backwards-compatible entrypoints in `optimize_svg.py` as thin facades until the end. Add logging hooks and surface a structured result object.
 - [todo] Stage 6 — Cleanup & migration  
