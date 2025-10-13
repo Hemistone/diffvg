@@ -158,6 +158,36 @@ Interactive editor
 
 ```
 python svg_brush.py
+
+### High-level optimization driver
+
+For quick experiments without writing a custom training loop, use the
+`SvgOptimizationDriver` helper that wraps the legacy `OptimizableSvg` API:
+
+```python
+import torch
+import pydiffvg
+
+pydiffvg.set_use_gpu(torch.cuda.is_available())
+
+settings = pydiffvg.SvgOptimizationSettings()
+driver = pydiffvg.SvgOptimizationDriver(
+    "apps/imgs/note_small.svg",
+    settings=settings,
+    optimize_background=False,
+    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+)
+
+target = torch.ones((driver.document.canvas[1], driver.document.canvas[0], 4), dtype=torch.float32)
+
+def mse_loss(image, iteration, drv):
+    return torch.nn.functional.mse_loss(image, target)
+
+history = driver.optimize(mse_loss, iterations=5)
+driver.save_svg("results/note_small_optimized.svg")
+```
+
+See `scripts/test_optimize_driver.py` for a runnable smoke test.
 ```
 
 Painterly rendering
