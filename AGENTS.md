@@ -6,7 +6,7 @@ This repository is a modernized fork of https://github.com/BachiLi/diffvg aimed 
 - `pydiffvg/`: Python API (PyTorch bindings, SVG parsing/rendering utilities).
 - C++ sources in repo root: core rasterizer and bindings (`*.cpp`, `*.h`).
 - `apps/`: runnable examples and small sanity checks (e.g., `single_circle.py`).
-- `cmake/`: CMake helpers; `pybind11/`: submodule for bindings.
+- `cmake/`: CMake helpers.
 - Generated build outputs: `build/`, wheels in `dist/`.
 
 ## Build, Test, and Development Commands
@@ -36,7 +36,7 @@ This repository is a modernized fork of https://github.com/BachiLi/diffvg aimed 
 - CI/local checks: ensure `pip install .` succeeds and key `apps/` scripts run.
 
 ## Security & Configuration Tips
-- Submodules: run `git submodule update --init --recursive` (required for `pybind11/`).
+- pybind11: install from pip/conda/system (e.g., `pip install pybind11>=3.0.1`) before configuring CMake.
 - CUDA builds require a CUDA 12.x toolkit; for CPU-only, set `DIFFVG_CUDA=0` and ensure Thrust headers are available or from Toolkit.
 
 ## Known Issue: Segfault and .pyc Corruption

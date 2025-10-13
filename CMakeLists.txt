@@ -27,20 +27,20 @@ option(DIFFVG_SANITIZE "Enable host sanitizers (asan, ubsan) for C++ sources" OF
 # Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-option(DIFFVG_USE_SYSTEM_PYBIND11 "Use a system-installed pybind11 instead of the vendored copy" OFF)
+option(DIFFVG_USE_SYSTEM_PYBIND11 "Use an externally installed pybind11 (pip/conda/system)" ON)
 if(DIFFVG_USE_SYSTEM_PYBIND11)
     find_package(pybind11 CONFIG QUIET)
     if(pybind11_FOUND)
         message(STATUS "Using system pybind11 ${pybind11_VERSION}")
+    else()
+        message(FATAL_ERROR
+            "pybind11 was not found. Install it (e.g. 'pip install pybind11>=3.0.1') "
+            "and/or pass -Dpybind11_DIR=$(python -m pybind11 --cmakedir) to CMake.")
     endif()
-endif()
-if(NOT pybind11_FOUND)
-    # Allow older pybind11 CMake to run with modern CMake via policy minimum
-    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-    add_subdirectory(pybind11)
-    set(pybind11_FOUND TRUE)
-    set(pybind11_VERSION "vendored")
-    message(STATUS "Using vendored pybind11")
+else()
+    message(FATAL_ERROR
+        "Vendored pybind11 has been removed. Set DIFFVG_USE_SYSTEM_PYBIND11=ON and "
+        "provide pybind11 via pip/conda/system packages.")
 endif()
 
 if(DIFFVG_CUDA)

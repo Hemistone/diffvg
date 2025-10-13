@@ -39,18 +39,17 @@ Important: activate the Python environment you intend to use before running any 
       - `curl -LsSf https://astral.sh/uv/install.sh | sh`
       - Ensure your shell PATH includes the installer’s suggested directory (e.g., `~/.local/bin`).
 
-  - **Clone the repository and initialize submodules**
+  - **Clone the repository**
 
-      - `git clone --recursive https://github.com/BachiLi/diffvg.git`
+      - `git clone https://github.com/BachiLi/diffvg.git`
       - `cd diffvg`
-      - If you have already cloned the repository, run the following to initialize the `pybind11` submodule:
-          - `git submodule update --init --recursive`
 
   - Create and activate a venv:
 
       - `python3 -m venv .venv && source .venv/bin/activate`
       - `python -m pip install -U pip setuptools wheel`
-      - This project uses `pybind11` as a Git submodule to ensure a consistent and self-contained build.
+      - `pip install -r requirements-build.txt` *(optional but recommended for local builds; includes `pybind11` and modern CMake/Ninja)*
+      - If you skip `requirements-build.txt`, install `pybind11>=3.0.1` manually: `pip install pybind11`
 
 ### A) Install runtime dependencies
 
@@ -94,7 +93,7 @@ uv users
 ### D) Manual CMake build (Ninja) + wheel
 
   - Prereqs: `cmake` (\>=3.25), `ninja`, a C++14 compiler, and for CUDA builds a CUDA Toolkit 12.x with `nvcc`.
-  - Note: Since `pybind11` is included as a Git submodule, this manual build process is fully self-contained and does not require `pybind11` to be installed in your Python environment.
+  - Note: You must have `pybind11>=3.0.1` available (e.g., `pip install pybind11` in your active environment) or pass `-Dpybind11_DIR=$(python -m pybind11 --cmakedir)` to CMake.
   - Configure + build (GPU example):
       - `mkdir -p build && cd build`
       - `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DDIFFVG_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=75;86;89 ..`
@@ -113,7 +112,7 @@ Compatibility
 
 # Troubleshooting
 
-  - **CMake Error: Cannot find pybind11** or `pybind11` directory is empty: This happens if you cloned the repository without fetching the submodule. Run `git submodule update --init --recursive` in the project root to fix it.
+  - **CMake Error: Cannot find pybind11**: Install it in your environment (`pip install pybind11>=3.0.1`) and/or re-run CMake with `-Dpybind11_DIR=$(python -m pybind11 --cmakedir)`.
   - CMake not found/too old: Prefer system install via apt (`sudo apt-get install cmake`) or the Kitware APT repo (see above). Verify with `cmake --version`.
   - Ninja not found: Prefer apt (`sudo apt-get install ninja-build`), or omit `-G Ninja` to use Makefiles/Visual Studio. As a last resort, install via `pip` inside your venv.
   - PyTorch missing: Build requires PyTorch. Install Torch/Torchvision first (see A) for CUDA/CPU indices).
