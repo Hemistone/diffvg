@@ -201,6 +201,8 @@ set(SRCS atomic.h
          atomic.cpp
          color.cpp
          bindings.cpp
+         render.cpp
+         render_support.cpp
          diffvg.cpp
          parallel.cpp
          scene.cpp
@@ -209,13 +211,13 @@ set(SRCS atomic.h
 add_library(diffvg MODULE ${SRCS})
 if(NOT DIFFVG_CUDA AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
     # Redundant with the global fallback but keep explicit in case flags change elsewhere.
-    set_source_files_properties(diffvg.cpp scene.cpp PROPERTIES COMPILE_OPTIONS "-O0")
+    set_source_files_properties(diffvg.cpp render.cpp render_support.cpp scene.cpp PROPERTIES COMPILE_OPTIONS "-O0")
 endif()
 if(DIFFVG_CUDA)
     target_compile_definitions(diffvg PRIVATE COMPILE_WITH_CUDA)
     # Compile CUDA kernels: default to scene.cpp only for nvcc stability.
     if(DIFFVG_CUDA_FULL_TU)
-        set_source_files_properties(diffvg.cpp scene.cpp PROPERTIES LANGUAGE CUDA)
+        set_source_files_properties(diffvg.cpp render.cpp render_support.cpp scene.cpp PROPERTIES LANGUAGE CUDA)
     else()
         set_source_files_properties(scene.cpp PROPERTIES LANGUAGE CUDA)
     endif()

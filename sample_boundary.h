@@ -17,7 +17,7 @@ struct BoundaryData {
     bool is_stroke;
 };
 
-DEVICE
+DEVICE inline
 Vector2f sample_boundary(const Circle &circle,
                          float t,
                          Vector2f &normal,
@@ -45,7 +45,7 @@ Vector2f sample_boundary(const Circle &circle,
     return ret;
 }
 
-DEVICE
+DEVICE inline
 Vector2f sample_boundary(const Ellipse &ellipse,
                          float t,
                          Vector2f &normal,
@@ -77,7 +77,7 @@ Vector2f sample_boundary(const Ellipse &ellipse,
     return ret;
 }
 
-DEVICE
+DEVICE inline
 Vector2f sample_boundary(const Path &path,
                          const float *path_length_cdf,
                          const float *path_length_pmf,
@@ -306,7 +306,7 @@ Vector2f sample_boundary(const Path &path,
     return Vector2f{0, 0};
 }
 
-DEVICE
+DEVICE inline
 Vector2f sample_boundary(const Rect &rect,
                          float t, Vector2f &normal,
                          float &pdf,
@@ -383,7 +383,7 @@ Vector2f sample_boundary(const Rect &rect,
     }
 }
 
-DEVICE
+DEVICE inline
 Vector2f sample_boundary(const SceneData &scene,
                          int shape_group_id,
                          int shape_id,
@@ -451,4 +451,3 @@ Vector2f sample_boundary(const SceneData &scene,
     assert(false);
     return Vector2f{};
 }
-

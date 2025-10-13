@@ -2,7 +2,7 @@
 
 #include "diffvg.h"
 
-DEVICE int sample(const float *cdf, int num_entries, float u, float *updated_u = nullptr) {
+DEVICE inline int sample(const float *cdf, int num_entries, float u, float *updated_u = nullptr) {
     // Binary search the cdf
     auto lb = 0;
     auto len = num_entries - 1 - lb;

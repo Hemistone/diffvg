@@ -6,7 +6,7 @@
 #include "solve.h"
 #include "vector.h"
 
-DEVICE
+DEVICE inline
 int compute_winding_number(const Circle &circle, const Vector2f &pt) {
     const auto &c = circle.center;
     auto r = circle.radius;
@@ -18,7 +18,7 @@ int compute_winding_number(const Circle &circle, const Vector2f &pt) {
     }
 }
 
-DEVICE
+DEVICE inline
 int compute_winding_number(const Ellipse &ellipse, const Vector2f &pt) {
     const auto &c = ellipse.center;
     const auto &r = ellipse.radius;
@@ -30,7 +30,7 @@ int compute_winding_number(const Ellipse &ellipse, const Vector2f &pt) {
     }
 }
 
-DEVICE
+DEVICE inline
 bool intersect(const AABB &box, const Vector2f &pt) {
     if (pt.y < box.p_min.y || pt.y > box.p_max.y) {
         return false;
@@ -41,7 +41,7 @@ bool intersect(const AABB &box, const Vector2f &pt) {
     return true;
 }
 
-DEVICE
+DEVICE inline
 int compute_winding_number(const Path &path, const BVHNode *bvh_nodes, const Vector2f &pt) {
     // Shoot a horizontal ray from pt to right, intersect with all curves of the path,
     // count intersection
@@ -173,7 +173,7 @@ int compute_winding_number(const Path &path, const BVHNode *bvh_nodes, const Vec
     return winding_number;
 }
 
-DEVICE
+DEVICE inline
 int compute_winding_number(const Rect &rect, const Vector2f &pt) {
     const auto &p_min = rect.p_min;
     const auto &p_max = rect.p_max;
@@ -185,7 +185,7 @@ int compute_winding_number(const Rect &rect, const Vector2f &pt) {
     }
 }
 
-DEVICE
+DEVICE inline
 int compute_winding_number(const Shape &shape, const BVHNode *bvh_nodes, const Vector2f &pt) {
     switch (shape.type) {
         case ShapeType::Circle:
