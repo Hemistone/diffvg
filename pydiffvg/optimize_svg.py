@@ -1,4 +1,3 @@
-import json
 import copy
 import xml.etree.ElementTree as etree
 from xml.dom import minidom
@@ -12,96 +11,7 @@ import math
 from collections import namedtuple
 import cssutils
 
-class SvgOptimizationSettings:
-
-    default_params = {
-        "optimize_color": True,
-        "color_lr": 2e-3,
-        "optimize_alpha": False,
-        "alpha_lr": 2e-3,
-        "optimizer": "Adam",
-        "transforms": {
-            "optimize_transforms":True,
-            "transform_mode":"rigid",
-            "translation_mult":1e-3,
-            "transform_lr":2e-3
-        },
-        "circles": {
-            "optimize_center": True,
-            "optimize_radius": True,
-            "shape_lr": 2e-1
-        },
-        "paths": {
-            "optimize_points": True,
-            "shape_lr": 2e-1
-        },
-        "gradients": {
-            "optimize_stops": True,
-            "stop_lr": 2e-3,
-            "optimize_color": True,
-            "color_lr": 2e-3,
-            "optimize_alpha": False,
-            "alpha_lr": 2e-3,
-            "optimize_location": True,
-            "location_lr": 2e-1
-        }
-    }
-
-    optims = {
-        "Adam": torch.optim.Adam,
-        "SGD": torch.optim.SGD,
-        "ASGD": torch.optim.ASGD,
-    }
-
-    #region methods
-    def __init__(self, f=None):
-        self.store = {}
-        if f is None:
-            self.store["default"] = copy.deepcopy(SvgOptimizationSettings.default_params)
-        else:
-            self.store = json.load(f)
-
-    # create default alias for root
-    def default_name(self, dname):
-        self.dname = dname
-        if dname not in self.store:
-            self.store[dname] = self.store["default"]
-
-    def retrieve(self, node_id):
-        if node_id not in self.store:
-            return (self.store["default"], False)
-        else:
-            return (self.store[node_id], True)
-
-    def reset_to_defaults(self, node_id):
-        if node_id in self.store:
-            del self.store[node_id]
-
-        return self.store["default"]
-
-    def undefault(self, node_id):
-        if node_id not in self.store:
-            self.store[node_id] = copy.deepcopy(self.store["default"])
-
-        return self.store[node_id]
-
-    def override_optimizer(self, optimizer):
-        if optimizer is not None:
-            for v in self.store.values():
-                v["optimizer"] = optimizer
-
-    def global_override(self, path, value):
-        for store in self.store.values():
-            d = store
-            for key in path[:-1]:
-                d = d[key]
-
-            d[path[-1]] = value
-
-    def save(self, file):
-        self.store["default"] = self.store[self.dname]
-        json.dump(self.store, file, indent="\t")
-    #endregion
+from .optimize import SvgOptimizationSettings
 
 class OptimizableSvg:
 
@@ -1606,4 +1516,3 @@ class OptimizableSvg:
 
 
 __all__ = ["SvgOptimizationSettings", "OptimizableSvg"]
-
