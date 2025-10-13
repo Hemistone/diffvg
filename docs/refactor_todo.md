@@ -85,3 +85,22 @@ Status Legend
 - todo: not started
 - doing: in progress
 - done: merged and verified via examples
+
+## Optimize SVG Refactor Roadmap
+
+Objective: retire the 1,600-line `pydiffvg/optimize_svg.py` in favor of a composable package while keeping the public entrypoints stable and preserving optimization results byte-for-byte at each stage.
+
+- [todo] Stage 0 — Baseline & guardrails  
+  Capture current behavior before moving code. Add a CPU-only smoke script under `scripts/` (e.g., `scripts/test_optimize_svg.py`) that runs a tiny optimization scene, record CLI usage in docs, and note invariants (default settings, expected assets) for regression checks.
+- [todo] Stage 1 — Package skeleton & settings extraction  
+  Introduce `pydiffvg/optimize/__init__.py` and move `SvgOptimizationSettings` plus related JSON helpers into `pydiffvg/optimize/settings.py`. Keep `optimize_svg.py` re-exporting the class to avoid breaking imports. Add focused unit tests for settings serialization.
+- [todo] Stage 2 — Transform utilities module  
+  Relocate `TransformTools` and matrix helpers into `pydiffvg/optimize/transforms.py` with numpy/torch type hints. Replace intra-file references with explicit imports and ensure conversion helpers remain free of side effects.
+- [todo] Stage 3 — Scene description data models  
+  Extract `OptimizableSvg` data structures (element representations, attribute tracking) into `pydiffvg/optimize/scene_graph.py`. Introduce typed containers (`NamedTuple`/`dataclass`) for circles, paths, gradients, and factor mutation logic away from parsing.
+- [todo] Stage 4 — Parser & writer separation  
+  Split XML/CSS parsing into `pydiffvg/optimize/parser.py` and serialization into `pydiffvg/optimize/writer.py`. Maintain deterministic ordering, isolate cssutils usage, and add localized tests that round-trip a small SVG fixture.
+- [todo] Stage 5 — Optimization driver orchestration  
+  Create `pydiffvg/optimize/driver.py` that wires settings, scene graph, and render steps. Keep CLI/backwards-compatible entrypoints in `optimize_svg.py` as thin facades until the end. Add logging hooks and surface a structured result object.
+- [todo] Stage 6 — Cleanup & migration  
+  Once stages 1–5 land, reduce `pydiffvg/optimize_svg.py` to deprecated shims, update documentation/examples to import from the new package, and run full CPU + CUDA smoke tests (apps and optimization script) before removing the monolith.
