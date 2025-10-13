@@ -90,8 +90,8 @@ Status Legend
 
 Objective: retire the 1,600-line `pydiffvg/optimize_svg.py` in favor of a composable package while keeping the public entrypoints stable and preserving optimization results byte-for-byte at each stage.
 
-- [todo] Stage 0 — Baseline & guardrails  
-  Capture current behavior before moving code. Add a CPU-only smoke script under `scripts/` (e.g., `scripts/test_optimize_svg.py`) that runs a tiny optimization scene, record CLI usage in docs, and note invariants (default settings, expected assets) for regression checks.
+- [done] Stage 0 — Baseline & guardrails  
+  Capture current behavior before moving code. The CPU-only smoke script `scripts/test_optimize_svg.py` (run via `python scripts/test_optimize_svg.py`) optimizes `apps/imgs/note_small.svg` toward a white target for five Adam steps on CPU and asserts the MSE drops by ≥0.005. Invariants: rely on default `SvgOptimizationSettings`, disable background optimization, and expect loss monotonicity when seeds are `[0..n)`. Document additional CLI entrypoints here once new front-ends appear.
 - [todo] Stage 1 — Package skeleton & settings extraction  
   Introduce `pydiffvg/optimize/__init__.py` and move `SvgOptimizationSettings` plus related JSON helpers into `pydiffvg/optimize/settings.py`. Keep `optimize_svg.py` re-exporting the class to avoid breaking imports. Add focused unit tests for settings serialization.
 - [todo] Stage 2 — Transform utilities module  
