@@ -1,8 +1,8 @@
-# Bézier Splatting for Fast and Differentiable Vector Graphics (Notes for neo-diffvg)
+# Bézier Splatting for Fast and Differentiable Vector Graphics (Notes for modern diffvg)
 
-This document summarizes the paper “Bézier Splatting for Fast and Differentiable Vector Graphics Rendering” (arXiv:2503.16424) with the core equations and implementation details relevant to integrating Bézier Splatting into neo-diffvg while maintaining pydiffvg API parity.
+This document summarizes the paper “Bézier Splatting for Fast and Differentiable Vector Graphics Rendering” (arXiv:2503.16424) with the core equations and implementation details relevant to integrating Bézier Splatting into diffvg project.
 
-> Legacy note: early drafts targeted the JAX prototype (`jaxdiffvg` branch). This revision aligns the guidance with the PyTorch backend while keeping that branch for archival reference.
+> Context: The first revision of this memo targeted the JAX prototype (`jaxdiffvg`) and the Python/Triton renderer (`neo-diffvg`). This updated version describes how the technique maps onto the current C++/CUDA diffvg backend that is surfaced to Python through pybind11.
 
 ## Overview
 
@@ -95,21 +95,15 @@ Notes:
   - Densify: add new curves in high-error regions (e.g., circle-initialized as in LIVE); match added count to removed to keep total constant.
   - Example settings (from experiments): opacity threshold 0.02; AABB overlap threshold 0.9; apply every ~400 steps; open curves optimized ~15k steps, closed ~10k steps. LR example: color 1e−2, control points 2e−4, opacity 1e−1.
 
-## Implementation Notes for neo-diffvg (PyTorch)
+## Implementation Notes for modern diffvg (PyTorch backend)
 
-- API parity: pydiffvg’s public API must remain unchanged. Internally, implement the PyTorch renderer so scene construction mirrors DiffVG semantics and tensors are created on `pydiffvg.get_device()` with the caller’s requested dtype.
-- Open strokes:
-  - Keep DiffVG’s poly-Bézier stroke representation; sample K along segments; compute θ, σ_x, σ_y via (7)(8). Derive σ_y from the stroke width and enforce contiguous tensors so vectorized kernels can stride across segments efficiently.
-- Closed fills:
-  - Map a filled path to a paired-curve strip for interior Gaussians (as in (4)(5)(6)). Preserve DiffVG’s even-odd fill semantics at the API boundary by constructing appropriate boundary pairs per subpath/winding parity. Serialization should continue to round-trip cleanly to SVG.
-- Splatting kernel:
-  - Build per-Gaussian parameters (μ, Σ, c, o, d) and perform tiled/blocked alpha blending in screen space. Sort by depth within tile; compute α via (10); composite via (9).
-  - Express the kernel in vectorized PyTorch operations first; profile hotspots and optionally introduce custom CUDA/Triton kernels guarded by feature flags. `torch.compile` can wrap the forward pass once correctness is locked in.
-- Differentiation:
-  - Wrap the rasterization path in a `torch.autograd.Function` so forward allocates the minimal caches required for backward (e.g., Σ^{-1}, per-tile coverage masks, accumulated alphas). Backward should propagate gradients to Gaussian parameters and then to control points via the sampling map.
-  - Clamp σ and α inside the custom backward to avoid NaNs; consider mixed-precision pathways gated by `torch.cuda.amp` if needed.
-- Torch integration:
-  - Return PyTorch tensors directly; respect the active `torch.Generator` seeded from `SceneOptions.seed` for deterministic sampling. Avoid inter-framework bridges; rely on standard Tensor APIs for downstream consumption.
+- API parity: keep the public `pydiffvg` surface identical. Route backend selection through `pydiffvg.backend`/`pydiffvg.backends.registry` so callers can opt into Bézier Splatting without touching scene-building code. Respect existing device/dtype handling by allocating tensors on `pydiffvg.get_device()`.
+- Scene serialization: reuse `RenderFunction.serialize_scene` to gather shapes, control points, colors, and stroke widths into contiguous tensors. Once serialized, stay on the PyTorch side (no further calls into the baseline C++ renderer) so the splatting pipeline can run independently.
+- Open strokes: keep diffvg’s poly-Bézier representation; sample t as in (3); derive θ, σ_x, σ_y using (7)(8). Tie σ_y to stroke width and ensure the sampled tensors are laid out segment-major for efficient vectorized math.
+- Closed fills: convert filled paths into paired boundary strips (4)(5)(6). Maintain even-odd fill semantics by constructing strip pairs per subpath and mapping opacity/color exactly as the baseline renderer expects. Preserve SVG round-tripping by keeping serialization outputs unchanged.
+- Splatting kernel: compute per-Gaussian parameters (μ, Σ, c, o, d), bin them into tiles, and alpha-blend per (9)(10). Start with a Torch implementation that works on CPU and CUDA; profile before considering custom kernels (Triton/C++). Keep the kernel behind a feature flag so we can compare against the baseline.
+- Differentiation: wrap the path in a `torch.autograd.Function`. Cache only what is needed for backward (Σ^{-1}, tile coverage, accumulated alpha). Backward should return gradients for control points, stroke width, and colors by chaining through the sampling map. Clamp σ and α in both passes to avoid numerical issues; wire up AMP guards for mixed precision.
+- PyTorch/pybind11 integration: return tensors directly to match existing examples and optimizers. Honor `SceneOptions.seed` by threading the Torch RNG through sampling. When optional C++ kernels arrive, expose them via pybind11 helpers but keep the Python entry point stable so downstream code remains untouched.
 
 ## Practical Knobs and Defaults
 
@@ -147,4 +141,4 @@ Notes:
 - (10)(11): Gaussian alpha and covariance
 - (13): Training objective
 
-This note should be sufficient to implement a faithful, performant PyTorch rasterizer using Bézier Splatting under neo-diffvg, while keeping pydiffvg API behavior intact.
+This note should be sufficient to implement a faithful, performant Bézier Splatting backend inside the modern diffvg repo while keeping pydiffvg API behavior intact.
