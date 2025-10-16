@@ -50,7 +50,7 @@ void sort_boundary_samples(uint32_t *keys, int *values, size_t count, bool use_g
     if (!use_gpu || count == 0) {
         return;
     }
-#ifdef COMPILE_WITH_CUDA
+#if defined(COMPILE_WITH_CUDA) && !defined(DIFFVG_DISABLE_GPU_SORT)
     if (!diffvg_disable_gpu_sort()) {
         diffvg_gpu_sort_by_key_uint_uint(keys, values, count);
         return;
@@ -475,9 +475,9 @@ void render(std::shared_ptr<Scene> scene,
     float *weight_image = nullptr;
     // Allocate and zero the weight image
     if (scene->use_gpu) {
-#ifdef __CUDACC__
+#ifdef COMPILE_WITH_CUDA
         if (eval_positions.get() == nullptr) {
-            checkCuda(cudaMallocManaged(&weight_image, width * height * sizeof(float)));
+            checkCuda(cudaMallocManaged(reinterpret_cast<void **>(&weight_image), width * height * sizeof(float)));
             cudaMemset(weight_image, 0, width * height * sizeof(float));
         }
 #else
@@ -534,12 +534,12 @@ void render(std::shared_ptr<Scene> scene,
         uint32_t *morton_codes = nullptr; // for sorting
         // Allocate boundary samples
         if (scene->use_gpu) {
-#ifdef __CUDACC__
-            checkCuda(cudaMallocManaged(&boundary_samples,
+#ifdef COMPILE_WITH_CUDA
+            checkCuda(cudaMallocManaged(reinterpret_cast<void **>(&boundary_samples),
                 num_samples * sizeof(BoundarySample)));
-            checkCuda(cudaMallocManaged(&boundary_ids,
+            checkCuda(cudaMallocManaged(reinterpret_cast<void **>(&boundary_ids),
                 num_samples * sizeof(int)));
-            checkCuda(cudaMallocManaged(&morton_codes,
+            checkCuda(cudaMallocManaged(reinterpret_cast<void **>(&morton_codes),
                 num_samples * sizeof(uint32_t)));
 #else
             assert(false);
@@ -577,7 +577,7 @@ void render(std::shared_ptr<Scene> scene,
             num_samples_y
         }, num_samples, scene->use_gpu);
         if (scene->use_gpu) {
-#ifdef __CUDACC__
+#ifdef COMPILE_WITH_CUDA
             checkCuda(cudaFree(boundary_samples));
             checkCuda(cudaFree(boundary_ids));
             checkCuda(cudaFree(morton_codes));
@@ -593,7 +593,7 @@ void render(std::shared_ptr<Scene> scene,
 
     // Clean up weight image
     if (scene->use_gpu) {
-#ifdef __CUDACC__
+#ifdef COMPILE_WITH_CUDA
         checkCuda(cudaFree(weight_image));
 #else
         assert(false);

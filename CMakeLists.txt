@@ -21,8 +21,9 @@ option(DIFFVG_OPENMP "Enable OpenMP for CPU parallelism" OFF)
 option(DIFFVG_LTO "Enable link-time optimization (IPO/LTO)" OFF)
 option(DIFFVG_NATIVE "Enable -march=native for CPU compilation" OFF)
 option(DIFFVG_FAST_MATH "Enable --use_fast_math for CUDA compilation" OFF)
-option(DIFFVG_CUDA_FULL_TU "Compile both diffvg.cpp and scene.cpp as CUDA" OFF)
+option(DIFFVG_CUDA_FULL_TU "Compile core translation units with NVCC (diffvg.cpp, render.cpp, render_support.cpp, scene.cpp)" OFF)
 option(DIFFVG_SANITIZE "Enable host sanitizers (asan, ubsan) for C++ sources" OFF)
+option(DIFFVG_DISABLE_GPU_SORT "Disable GPU Thrust sort (build host-only fallback)" OFF)
 
 # Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
@@ -54,6 +55,8 @@ if(DIFFVG_CUDA)
         set(CMAKE_CUDA_FORWARD_UNKNOWN_TO_HOST_COMPILER OFF CACHE BOOL
             "Do not forward unknown host flags to nvcc (stability workaround)" FORCE)
         message(STATUS "Build with CUDA support")
+        # Avoid nvcc adding forward-unknown flag
+        set(CMAKE_CUDA_COMPILE_OPTIONS_FORWARD_UNKNOWN_TO_HOST_COMPILER "" CACHE STRING "" FORCE)
         enable_language(CUDA)
         # Prefer native CMake CUDA; require toolkit for cudart linkage
         find_package(CUDAToolkit QUIET)
@@ -65,6 +68,8 @@ if(DIFFVG_CUDA)
             set(CMAKE_CUDA_STANDARD ${CAME_CUDA_STD_TMP})
             set(CMAKE_CUDA_STANDARD_REQUIRED ON)
             # Keep nvcc stable on large TUs by not forwarding unknown flags
+            # Control via policy CMP0146; do not inject additional flags that
+            # might be forwarded to GCC by nvcc.
             set(CMAKE_CUDA_FORWARD_UNKNOWN_TO_HOST_COMPILER OFF)
             # Ensure we link against the shared CUDA runtime only (avoid cudart_static/cudadevrt)
             set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
@@ -158,7 +163,8 @@ if(NOT MSVC)
   if(CMAKE_BUILD_TYPE MATCHES "Debug")
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-g>)
   endif()
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12)
+    # GCC 12+ can ICE on some pybind11-heavy TUs; default to -O0 for stability.
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O0>)
     set(CMAKE_CXX_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "" FORCE)
     if(DIFFVG_CUDA)
@@ -218,12 +224,16 @@ if(NOT DIFFVG_CUDA AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPIL
 endif()
 if(DIFFVG_CUDA)
     target_compile_definitions(diffvg PRIVATE COMPILE_WITH_CUDA)
-    # Compile CUDA kernels: default to scene.cpp only for nvcc stability.
-    if(DIFFVG_CUDA_FULL_TU)
-        set_source_files_properties(diffvg.cpp render.cpp render_support.cpp scene.cpp PROPERTIES LANGUAGE CUDA)
+    if(DIFFVG_DISABLE_GPU_SORT)
+        target_compile_definitions(diffvg PRIVATE DIFFVG_DISABLE_GPU_SORT=1)
     else()
-        set_source_files_properties(scene.cpp PROPERTIES LANGUAGE CUDA)
+        # Include the tiny CUDA TU implementing Thrust sort only when enabled
+        target_sources(diffvg PRIVATE gpu_sort.cu)
+        set_source_files_properties(gpu_sort.cu PROPERTIES LANGUAGE CUDA)
     endif()
+    # Compile CUDA kernels: default to scene.cpp only for nvcc stability.
+    # Compile GPU-launching/Device-calling TUs with NVCC
+    set_source_files_properties(render.cpp render_support.cpp PROPERTIES LANGUAGE CUDA)
     # CUDA-specific flags
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>)
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xptxas -O0>)
@@ -234,9 +244,10 @@ if(DIFFVG_CUDA)
     if(DIFFVG_FAST_MATH)
         target_compile_options(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
     endif()
-    # Avoid separable device linking to prevent pulling cudadevrt/cudart_static
-    set_target_properties(diffvg PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
-    set_target_properties(diffvg PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS OFF)
+    # Enable separable device linking so device functions across TUs resolve.
+    # Keep runtime shared to avoid bundling cudart_static.
+    set_target_properties(diffvg PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    set_target_properties(diffvg PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 endif()
 
 if(APPLE)

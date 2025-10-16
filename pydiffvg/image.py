@@ -1,14 +1,31 @@
 """Image IO helpers for pydiffvg.
 
-Provides a thin wrapper around skimage to save tensors/arrays with gamma.
+Save tensors/arrays with gamma correction using a backend that does not rely on
+skimage plugin autoloading (which can be brittle in some Python 3.12 stacks).
+Prefers matplotlib; falls back to skimage only if explicitly available.
 """
 
 from typing import Union
 import os
 import numpy as np
-import skimage
-import skimage.io
 import torch
+from typing import Optional
+
+def _save_with_matplotlib(img_uint8, filename: str) -> bool:
+    try:
+        from matplotlib import image as mpimg
+        mpimg.imsave(filename, img_uint8)
+        return True
+    except Exception:
+        return False
+
+def _save_with_skimage(img_uint8, filename: str) -> bool:
+    try:
+        import skimage.io
+        skimage.io.imsave(filename, img_uint8)
+        return True
+    except Exception:
+        return False
 
 
 def imwrite(
@@ -48,6 +65,18 @@ def imwrite(
         #repeat along the third dimension
         img=np.expand_dims(img,2)
     img[:, :, :3] = np.power(img[:, :, :3], 1.0/gamma)
-    skimage.io.imsave(filename, (img * 255).astype(np.uint8))
+    img_uint8 = (img * 255).astype(np.uint8)
+    if _save_with_matplotlib(img_uint8, filename):
+        return
+    if _save_with_skimage(img_uint8, filename):
+        return
+    # Last resort: use PIL if present
+    try:
+        from PIL import Image
+        Image.fromarray(img_uint8).save(filename)
+        return
+    except Exception:
+        pass
+    raise RuntimeError("No available image backend (matplotlib/skimage/PIL) to save image.")
 
 __all__ = ["imwrite"]

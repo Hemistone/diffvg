@@ -1,12 +1,12 @@
 #pragma once
 
-#ifdef __NVCC__ 
-    #define DEVICE __device__ __host__ 
+#ifdef __CUDACC__
+    #define DEVICE __device__ __host__
 #else
     #define DEVICE
 #endif
 
-#ifndef __NVCC__
+#ifndef __CUDACC__
     #include <cmath>
     namespace {
         inline float fmodf(float a, float b) {

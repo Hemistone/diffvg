@@ -39,6 +39,12 @@ class Build(build_ext):
                           '-DPYTHON_LIBRARY=' + get_config_var('LIBDIR'),
                           '-DPYTHON_INCLUDE_PATH=' + include_path]
 
+            # Allow overriding pybind11_DIR for CMake discovery when using
+            # pip/PEP517-less installs where CMake can't auto-find pybind11.
+            env_pybind11_dir = os.environ.get('pybind11_DIR') or os.environ.get('PYBIND11_DIR')
+            if env_pybind11_dir:
+                cmake_args.append(f'-Dpybind11_DIR={env_pybind11_dir}')
+
             cfg = 'Debug' if self.debug else 'Release'
             build_args = ['--config', cfg]
 
@@ -68,7 +74,7 @@ class Build(build_ext):
             super().build_extension(ext)
 
 torch_spec = importlib.util.find_spec("torch")
-packages = ['pydiffvg']
+packages = ['pydiffvg', 'pydiffvg.optimize', 'pydiffvg.backends']
 build_with_cuda = False
 if torch_spec is not None:
     import torch

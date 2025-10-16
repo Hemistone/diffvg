@@ -15,6 +15,238 @@
 #include <cmath>
 
 
+DEVICE
+Vector4f sample_color(const ColorType &color_type,
+                      void *color,
+                      const Vector2f &pt) {
+    switch (color_type) {
+        case ColorType::Constant: {
+            auto c = (const Constant*)color;
+            assert(isfinite(c->color));
+            return c->color;
+        } case ColorType::LinearGradient: {
+            auto c = (const LinearGradient*)color;
+            // Project pt to (c->begin, c->end)
+            auto beg = c->begin;
+            auto end = c->end;
+            auto t = dot(pt - beg, end - beg) / max(dot(end - beg, end - beg), 1e-3f);
+            // Find the correponding stop:
+            if (t < c->stop_offsets[0]) {
+                return Vector4f{c->stop_colors[0],
+                                c->stop_colors[1],
+                                c->stop_colors[2],
+                                c->stop_colors[3]};
+            }
+            for (int i = 0; i < c->num_stops - 1; i++) {
+                auto offset_curr = c->stop_offsets[i];
+                auto offset_next = c->stop_offsets[i + 1];
+                assert(offset_next > offset_curr);
+                if (t >= offset_curr && t < offset_next) {
+                    auto color_curr = Vector4f{
+                        c->stop_colors[4 * i + 0],
+                        c->stop_colors[4 * i + 1],
+                        c->stop_colors[4 * i + 2],
+                        c->stop_colors[4 * i + 3]};
+                    auto color_next = Vector4f{
+                        c->stop_colors[4 * (i + 1) + 0],
+                        c->stop_colors[4 * (i + 1) + 1],
+                        c->stop_colors[4 * (i + 1) + 2],
+                        c->stop_colors[4 * (i + 1) + 3]};
+                    auto tt = (t - offset_curr) / (offset_next - offset_curr);
+                    assert(isfinite(tt));
+                    assert(isfinite(color_curr));
+                    assert(isfinite(color_next));
+                    return color_curr * (1 - tt) + color_next * tt;
+                }
+            }
+            return Vector4f{c->stop_colors[4 * (c->num_stops - 1) + 0],
+                            c->stop_colors[4 * (c->num_stops - 1) + 1],
+                            c->stop_colors[4 * (c->num_stops - 1) + 2],
+                            c->stop_colors[4 * (c->num_stops - 1) + 3]};
+        } case ColorType::RadialGradient: {
+            auto c = (const RadialGradient*)color;
+            // Distance from pt to center
+            auto offset = pt - c->center;
+            auto normalized_offset = offset / c->radius;
+            auto t = length(normalized_offset);
+            // Find the correponding stop:
+            if (t < c->stop_offsets[0]) {
+                return Vector4f{c->stop_colors[0],
+                                c->stop_colors[1],
+                                c->stop_colors[2],
+                                c->stop_colors[3]};
+            }
+            for (int i = 0; i < c->num_stops - 1; i++) {
+                auto offset_curr = c->stop_offsets[i];
+                auto offset_next = c->stop_offsets[i + 1];
+                assert(offset_next > offset_curr);
+                if (t >= offset_curr && t < offset_next) {
+                    auto color_curr = Vector4f{
+                        c->stop_colors[4 * i + 0],
+                        c->stop_colors[4 * i + 1],
+                        c->stop_colors[4 * i + 2],
+                        c->stop_colors[4 * i + 3]};
+                    auto color_next = Vector4f{
+                        c->stop_colors[4 * (i + 1) + 0],
+                        c->stop_colors[4 * (i + 1) + 1],
+                        c->stop_colors[4 * (i + 1) + 2],
+                        c->stop_colors[4 * (i + 1) + 3]};
+                    auto tt = (t - offset_curr) / (offset_next - offset_curr);
+                    assert(isfinite(tt));
+                    assert(isfinite(color_curr));
+                    assert(isfinite(color_next));
+                    return color_curr * (1 - tt) + color_next * tt;
+                }
+            }
+            return Vector4f{c->stop_colors[4 * (c->num_stops - 1) + 0],
+                            c->stop_colors[4 * (c->num_stops - 1) + 1],
+                            c->stop_colors[4 * (c->num_stops - 1) + 2],
+                            c->stop_colors[4 * (c->num_stops - 1) + 3]};
+        } default: {
+            assert(false);
+        }
+    }
+    return Vector4f{};
+}
+
+DEVICE
+void d_sample_color(const ColorType &color_type,
+                    void *color_ptr,
+                    const Vector2f &pt,
+                    const Vector4f &d_color,
+                    void *d_color_ptr,
+                    float *d_translation) {
+    switch (color_type) {
+        case ColorType::Constant: {
+            auto d_c = (Constant*)d_color_ptr;
+            atomic_add(&d_c->color[0], d_color);
+            return;
+        } case ColorType::LinearGradient: {
+            auto c = (const LinearGradient*)color_ptr;
+            auto d_c = (LinearGradient*)d_color_ptr;
+            // Project pt to (c->begin, c->end)
+            auto beg = c->begin;
+            auto end = c->end;
+            auto t = dot(pt - beg, end - beg) / max(dot(end - beg, end - beg), 1e-3f);
+            // Find the correponding stop:
+            if (t < c->stop_offsets[0]) {
+                atomic_add(&d_c->stop_colors[0], d_color);
+                return;
+            }
+            for (int i = 0; i < c->num_stops - 1; i++) {
+                auto offset_curr = c->stop_offsets[i];
+                auto offset_next = c->stop_offsets[i + 1];
+                assert(offset_next > offset_curr);
+                if (t >= offset_curr && t < offset_next) {
+                    auto color_curr = Vector4f{
+                        c->stop_colors[4 * i + 0],
+                        c->stop_colors[4 * i + 1],
+                        c->stop_colors[4 * i + 2],
+                        c->stop_colors[4 * i + 3]};
+                    auto color_next = Vector4f{
+                        c->stop_colors[4 * (i + 1) + 0],
+                        c->stop_colors[4 * (i + 1) + 1],
+                        c->stop_colors[4 * (i + 1) + 2],
+                        c->stop_colors[4 * (i + 1) + 3]};
+                    auto tt = (t - offset_curr) / (offset_next - offset_curr);
+                    // return color_curr * (1 - tt) + color_next * tt;
+                    auto d_color_curr = d_color * (1 - tt);
+                    auto d_color_next = d_color * tt;
+                    auto d_tt = sum(d_color * (color_next - color_curr));
+                    auto d_offset_next = -d_tt * tt / (offset_next - offset_curr);
+                    auto d_offset_curr = d_tt * ((tt - 1.f) / (offset_next - offset_curr));
+                    auto d_t = d_tt / (offset_next - offset_curr);
+                    assert(isfinite(d_tt));
+                    atomic_add(&d_c->stop_colors[4 * i], d_color_curr);
+                    atomic_add(&d_c->stop_colors[4 * (i + 1)], d_color_next);
+                    atomic_add(&d_c->stop_offsets[i], d_offset_curr);
+                    atomic_add(&d_c->stop_offsets[i + 1], d_offset_next);
+                    // auto t = dot(pt - beg, end - beg) / max(dot(end - beg, end - beg), 1e-6f);
+                    // l = max(dot(end - beg, end - beg), 1e-3f)
+                    // t = dot(pt - beg, end - beg) / l;
+                    auto l = max(dot(end - beg, end - beg), 1e-3f);
+                    auto d_beg = d_t * (-(pt - beg)-(end - beg)) / l;
+                    auto d_end = d_t * (pt - beg) / l;
+                    auto d_l = -d_t * t / l;
+                    if (dot(end - beg, end - beg) > 1e-3f) {
+                        d_beg += 2 * d_l * (beg - end);
+                        d_end += 2 * d_l * (end - beg);
+                    }
+                    atomic_add(&d_c->begin[0], d_beg);
+                    atomic_add(&d_c->end[0], d_end);
+                    if (d_translation != nullptr) {
+                        atomic_add(d_translation, (d_beg + d_end));
+                    }
+                    return;
+                }
+            }
+            atomic_add(&d_c->stop_colors[4 * (c->num_stops - 1)], d_color);
+            return;
+        } case ColorType::RadialGradient: {
+            auto c = (const RadialGradient*)color_ptr;
+            auto d_c = (RadialGradient*)d_color_ptr;
+            // Distance from pt to center
+            auto offset = pt - c->center;
+            auto normalized_offset = offset / c->radius;
+            auto t = length(normalized_offset);
+            // Find the correponding stop:
+            if (t < c->stop_offsets[0]) {
+                atomic_add(&d_c->stop_colors[0], d_color);
+                return;
+            }
+            for (int i = 0; i < c->num_stops - 1; i++) {
+                auto offset_curr = c->stop_offsets[i];
+                auto offset_next = c->stop_offsets[i + 1];
+                assert(offset_next > offset_curr);
+                if (t >= offset_curr && t < offset_next) {
+                    auto color_curr = Vector4f{
+                        c->stop_colors[4 * i + 0],
+                        c->stop_colors[4 * i + 1],
+                        c->stop_colors[4 * i + 2],
+                        c->stop_colors[4 * i + 3]};
+                    auto color_next = Vector4f{
+                        c->stop_colors[4 * (i + 1) + 0],
+                        c->stop_colors[4 * (i + 1) + 1],
+                        c->stop_colors[4 * (i + 1) + 2],
+                        c->stop_colors[4 * (i + 1) + 3]};
+                    auto tt = (t - offset_curr) / (offset_next - offset_curr);
+                    assert(isfinite(tt));
+                    // return color_curr * (1 - tt) + color_next * tt;
+                    auto d_color_curr = d_color * (1 - tt);
+                    auto d_color_next = d_color * tt;
+                    auto d_tt = sum(d_color * (color_next - color_curr));
+                    auto d_offset_next = -d_tt * tt / (offset_next - offset_curr);
+                    auto d_offset_curr = d_tt * ((tt - 1.f) / (offset_next - offset_curr));
+                    auto d_t = d_tt / (offset_next - offset_curr);
+                    assert(isfinite(d_t));
+                    atomic_add(&d_c->stop_colors[4 * i], d_color_curr);
+                    atomic_add(&d_c->stop_colors[4 * (i + 1)], d_color_next);
+                    atomic_add(&d_c->stop_offsets[i], d_offset_curr);
+                    atomic_add(&d_c->stop_offsets[i + 1], d_offset_next);
+                    // offset = pt - c->center
+                    // normalized_offset = offset / c->radius
+                    // t = length(normalized_offset)
+                    auto d_normalized_offset = d_length(normalized_offset, d_t);
+                    auto d_offset = d_normalized_offset / c->radius;
+                    auto d_radius = -d_normalized_offset * offset / (c->radius * c->radius);
+                    auto d_center = -d_offset;
+                    atomic_add(&d_c->center[0], d_center);
+                    atomic_add(&d_c->radius[0], d_radius);
+                    if (d_translation != nullptr) {
+                        atomic_add(d_translation, d_center);
+                    }
+                }
+            }
+            atomic_add(&d_c->stop_colors[4 * (c->num_stops - 1)], d_color);
+            return;
+        } default: {
+            assert(false);
+        }
+    }
+}
+
+ 
+
 struct Fragment {
     Vector3f color;
     float alpha;
@@ -33,6 +265,176 @@ struct PrefilterFragment {
     ClosestPointPathInfo path_info;
     bool within_distance;
 };
+// INSERT_AFTER_STRUCTS
+DEVICE
+Vector4f sample_color(const SceneData &scene,
+                      const Vector4f *background_color,
+                      const Vector2f &screen_pt,
+                      const Vector4f *d_color,
+                      EdgeQuery *edge_query,
+                      Vector4f *d_background_color,
+                      float *d_translation) {
+    if (edge_query != nullptr) {
+        edge_query->hit = false;
+    }
+
+    auto pt = screen_pt;
+    pt.x *= scene.canvas_width;
+    pt.y *= scene.canvas_height;
+    constexpr auto max_hit_shapes = 256;
+    constexpr auto max_bvh_stack_size = 64;
+    Fragment fragments[max_hit_shapes];
+    int bvh_stack[max_bvh_stack_size];
+    auto stack_size = 0;
+    auto num_fragments = 0;
+    bvh_stack[stack_size++] = 2 * scene.num_shape_groups - 2;
+    while (stack_size > 0) {
+        const BVHNode &node = scene.bvh_nodes[bvh_stack[--stack_size]];
+        if (node.child1 < 0) {
+            auto group_id = node.child0;
+            const ShapeGroup &shape_group = scene.shape_groups[group_id];
+            if (shape_group.stroke_color != nullptr) {
+                if (within_distance(scene, group_id, pt, edge_query)) {
+                    auto color_alpha = sample_color(shape_group.stroke_color_type,
+                                                    shape_group.stroke_color,
+                                                    pt);
+                    Fragment f;
+                    f.color = Vector3f{color_alpha[0], color_alpha[1], color_alpha[2]};
+                    f.alpha = color_alpha[3];
+                    f.group_id = group_id;
+                    f.is_stroke = true;
+                    assert(num_fragments < max_hit_shapes);
+                    fragments[num_fragments++] = f;
+                }
+            }
+            if (shape_group.fill_color != nullptr) {
+                if (is_inside(scene, group_id, pt, edge_query)) {
+                    auto color_alpha = sample_color(shape_group.fill_color_type,
+                                                    shape_group.fill_color,
+                                                    pt);
+                    Fragment f;
+                    f.color = Vector3f{color_alpha[0], color_alpha[1], color_alpha[2]};
+                    f.alpha = color_alpha[3];
+                    f.group_id = group_id;
+                    f.is_stroke = false;
+                    assert(num_fragments < max_hit_shapes);
+                    fragments[num_fragments++] = f;
+                }
+            }
+        } else {
+            assert(node.child0 >= 0 && node.child1 >= 0);
+            const AABB &b0 = scene.bvh_nodes[node.child0].box;
+            if (inside(b0, pt, scene.bvh_nodes[node.child0].max_radius)) {
+                bvh_stack[stack_size++] = node.child0;
+            }
+            const AABB &b1 = scene.bvh_nodes[node.child1].box;
+            if (inside(b1, pt, scene.bvh_nodes[node.child1].max_radius)) {
+                bvh_stack[stack_size++] = node.child1;
+            }
+            assert(stack_size <= max_bvh_stack_size);
+        }
+    }
+    if (num_fragments <= 0) {
+        if (background_color != nullptr) {
+            if (d_background_color != nullptr) {
+                *d_background_color = *d_color;
+            }
+            return *background_color;
+        }
+        return Vector4f{0, 0, 0, 0};
+    }
+    for (int i = 1; i < num_fragments; i++) {
+        auto j = i;
+        auto temp = fragments[j];
+        while (j > 0 && fragments[j - 1].group_id > temp.group_id) {
+            fragments[j] = fragments[j - 1];
+            j--;
+        }
+        fragments[j] = temp;
+    }
+    Vector3f accum_color[max_hit_shapes];
+    float accum_alpha[max_hit_shapes];
+    auto first_alpha = 0.f;
+    auto first_color = Vector3f{0, 0, 0};
+    if (background_color != nullptr) {
+        first_alpha = background_color->w;
+        first_color = Vector3f{background_color->x,
+                               background_color->y,
+                               background_color->z};
+    }
+    for (int i = 0; i < num_fragments; i++) {
+        const Fragment &fragment = fragments[i];
+        auto new_color = fragment.color;
+        auto new_alpha = fragment.alpha;
+        auto prev_alpha = i > 0 ? accum_alpha[i - 1] : first_alpha;
+        auto prev_color = i > 0 ? accum_color[i - 1] : first_color;
+        if (edge_query != nullptr) {
+            if (new_alpha >= 1.f && edge_query->hit) {
+                edge_query->hit = false;
+            }
+            if (edge_query->shape_group_id == fragment.group_id) {
+                edge_query->hit = true;
+            }
+        }
+        accum_color[i] = prev_color * (1 - new_alpha) + new_alpha * new_color;
+        accum_alpha[i] = prev_alpha * (1 - new_alpha) + new_alpha;
+    }
+    auto final_color = accum_color[num_fragments - 1];
+    auto final_alpha = accum_alpha[num_fragments - 1];
+    if (final_alpha > 1e-6f) {
+        final_color /= final_alpha;
+    }
+    assert(isfinite(final_color));
+    assert(isfinite(final_alpha));
+    if (d_color != nullptr) {
+        auto d_final_color = Vector3f{(*d_color)[0], (*d_color)[1], (*d_color)[2]};
+        auto d_final_alpha = (*d_color)[3];
+        auto d_curr_color = d_final_color;
+        auto d_curr_alpha = d_final_alpha;
+        if (final_alpha > 1e-6f) {
+            d_curr_color = d_final_color / final_alpha;
+            d_curr_alpha -= sum(d_final_color * final_color) / final_alpha;
+        }
+        assert(isfinite(*d_color));
+        assert(isfinite(d_curr_color));
+        assert(isfinite(d_curr_alpha));
+        for (int i = num_fragments - 1; i >= 0; i--) {
+            auto prev_alpha = i > 0 ? accum_alpha[i - 1] : first_alpha;
+            auto prev_color = i > 0 ? accum_color[i - 1] : first_color;
+            auto d_prev_alpha = d_curr_alpha * (1.f - fragments[i].alpha);
+            auto d_alpha_i = d_curr_alpha * (1.f - prev_alpha);
+            d_alpha_i += sum(d_curr_color * (fragments[i].color - prev_color));
+            auto d_prev_color = d_curr_color * (1 - fragments[i].alpha);
+            auto d_color_i = d_curr_color * fragments[i].alpha;
+            auto group_id = fragments[i].group_id;
+            if (fragments[i].is_stroke) {
+                d_sample_color(scene.shape_groups[group_id].stroke_color_type,
+                               scene.shape_groups[group_id].stroke_color,
+                               pt,
+                               Vector4f{d_color_i[0], d_color_i[1], d_color_i[2], d_alpha_i},
+                               scene.d_shape_groups[group_id].stroke_color,
+                               d_translation);
+            } else {
+                d_sample_color(scene.shape_groups[group_id].fill_color_type,
+                               scene.shape_groups[group_id].fill_color,
+                               pt,
+                               Vector4f{d_color_i[0], d_color_i[1], d_color_i[2], d_alpha_i},
+                               scene.d_shape_groups[group_id].fill_color,
+                               d_translation);
+            }
+            d_curr_color = d_prev_color;
+            d_curr_alpha = d_prev_alpha;
+        }
+        if (d_background_color != nullptr) {
+            d_background_color->x += d_curr_color.x;
+            d_background_color->y += d_curr_color.y;
+            d_background_color->z += d_curr_color.z;
+            d_background_color->w += d_curr_alpha;
+        }
+    }
+    return Vector4f{final_color[0], final_color[1], final_color[2], final_alpha};
+}
+
 
 
 DEVICE
