@@ -159,27 +159,19 @@ if(DIFFVG_CUDA)
 endif()
 
 if(NOT MSVC)
-  # Host compiler flags (C++ only) — avoid generator-expression lists to prevent quoting issues
+  # Host compiler flags (C++ only)
   if(CMAKE_BUILD_TYPE MATCHES "Debug")
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-g>)
   endif()
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12)
-    # GCC 12+ can ICE on some pybind11-heavy TUs; default to -O0 for stability.
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O0>)
-    set(CMAKE_CXX_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "" FORCE)
-    if(DIFFVG_CUDA)
-      # Do not add -g0 to CUDA flags; nvcc doesn't support it.
-      set(CMAKE_CUDA_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "" FORCE)
-    endif()
-  else()
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O3>)
-  endif()
-  if(DIFFVG_NATIVE)
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-march=native>)
-  endif()
+  # Use normal optimization for release builds; we previously forced -O0 for
+  # stability during refactors, but that hurts runtime performance. Default to
+  # the toolchain’s standard Release flags instead.
   add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fvisibility=hidden>)
   add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wno-unknown-pragmas>)
   add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall>)
+  if(DIFFVG_NATIVE)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-march=native>)
+  endif()
 else()
   add_compile_options(/Wall /Zi)
   add_link_options(/DEBUG)
@@ -230,13 +222,15 @@ if(DIFFVG_CUDA)
         # Include the tiny CUDA TU implementing Thrust sort only when enabled
         target_sources(diffvg PRIVATE gpu_sort.cu)
         set_source_files_properties(gpu_sort.cu PROPERTIES LANGUAGE CUDA)
+        # Work around nvcc/ptxas instability on CUDA 12.x by lowering ptxas
+        # optimization for this tiny TU only. Other CUDA files remain optimized.
+        set_source_files_properties(gpu_sort.cu PROPERTIES COMPILE_OPTIONS "-Xptxas;-O0")
     endif()
     # Compile CUDA kernels: default to scene.cpp only for nvcc stability.
     # Compile GPU-launching/Device-calling TUs with NVCC
     set_source_files_properties(render.cpp render_support.cpp PROPERTIES LANGUAGE CUDA)
     # CUDA-specific flags
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>)
-    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xptxas -O0>)
     # Forward host flags to host compiler when compiling CUDA
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fvisibility=hidden>)
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-unknown-pragmas>)
@@ -325,3 +319,9 @@ string( REPLACE "-DNDEBUG" "" CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RE
 install(TARGETS diffvg
         LIBRARY DESTINATION .
         RUNTIME DESTINATION .)
+
+# GCC 12+/13 can exhibit issues optimizing large pybind11 TUs; keep those
+# at a conservative optimization level without impacting kernel or core code.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set_source_files_properties(bindings.cpp diffvg.cpp PROPERTIES COMPILE_OPTIONS "-O0")
+endif()
