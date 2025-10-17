@@ -32,11 +32,19 @@ class RenderFunction(torch.autograd.Function):
                                                       radius = torch.tensor(0.5)),
                         output_type = OutputType.color,
                         use_prefiltering = False,
-                        eval_positions = torch.tensor([])):
+                        eval_positions = torch.tensor([]),
+                        *,
+                        keep_on_device: bool = False,
+                        device: torch.device | str | None = None):
         """
             Given a list of shapes, convert them to a linear list of argument,
             so that we can use it in PyTorch.
         """
+        if keep_on_device:
+            raise NotImplementedError(
+                "The baseline diffvg renderer expects CPU-resident tensors; "
+                "set keep_on_device=False when using RenderFunction directly."
+            )
         # Delegate to extracted helper to keep behavior identical
         # Note: we keep the default filter here to avoid import-time cycles in the helper
         return _serialize_scene(canvas_width,
@@ -46,7 +54,9 @@ class RenderFunction(torch.autograd.Function):
                                 filter,
                                 output_type,
                                 use_prefiltering,
-                                eval_positions)
+                                eval_positions,
+                                keep_on_device=False,
+                                device=device)
 
     @staticmethod
     def forward(ctx,

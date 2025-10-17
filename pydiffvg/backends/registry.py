@@ -23,6 +23,7 @@ class RenderAPI:
     serialize_scene: Callable[..., tuple]
     apply: Callable[..., object]
     render_grad: Callable[..., tuple]
+    prefer_device_serialization: bool = False
 
 
 def _baseline_api() -> RenderAPI:
@@ -33,6 +34,7 @@ def _baseline_api() -> RenderAPI:
         serialize_scene=RF.serialize_scene,
         apply=RF.apply,
         render_grad=RF.render_grad,
+        prefer_device_serialization=False,
     )
 
 
@@ -49,6 +51,7 @@ def _splat_api() -> RenderAPI:
         serialize_scene=_not_ready,
         apply=_not_ready,
         render_grad=_not_ready,
+        prefer_device_serialization=True,
     )
 
 
@@ -70,4 +73,3 @@ def list_backends() -> tuple[str, ...]:
 
 
 __all__ = ["RenderAPI", "get_api", "list_backends"]
-
