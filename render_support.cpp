@@ -681,7 +681,6 @@ DEVICE void accumulate_boundary_gradient(const Shape &shape,
 }
 
 DEVICE
-DEVICE
 float sample_distance(const SceneData &scene,
                       const Vector2f &screen_pt,
                       float weight,

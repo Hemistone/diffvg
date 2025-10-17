@@ -6,6 +6,22 @@ if(POLICY CMP0146)
     cmake_policy(SET CMP0146 OLD)
 endif()
 
+# Prefer clang/clang++ as default host compilers for stability/perf
+if(NOT DEFINED CMAKE_C_COMPILER OR CMAKE_C_COMPILER STREQUAL "")
+    find_program(_CLANG_C clang)
+    if(_CLANG_C)
+        set(CMAKE_C_COMPILER "${_CLANG_C}" CACHE FILEPATH "C compiler" FORCE)
+        message(STATUS "Selecting clang as C compiler: ${CMAKE_C_COMPILER}")
+    endif()
+endif()
+if(NOT DEFINED CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER STREQUAL "")
+    find_program(_CLANG_CXX clang++)
+    if(_CLANG_CXX)
+        set(CMAKE_CXX_COMPILER "${_CLANG_CXX}" CACHE FILEPATH "C++ compiler" FORCE)
+        message(STATUS "Selecting clang++ as C++ compiler: ${CMAKE_CXX_COMPILER}")
+    endif()
+endif()
+
 project(diffvg VERSION 0.2.0 DESCRIPTION "Differentiable Vector Graphics")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +40,7 @@ option(DIFFVG_FAST_MATH "Enable --use_fast_math for CUDA compilation" OFF)
 option(DIFFVG_CUDA_FULL_TU "Compile core translation units with NVCC (diffvg.cpp, render.cpp, render_support.cpp, scene.cpp)" OFF)
 option(DIFFVG_SANITIZE "Enable host sanitizers (asan, ubsan) for C++ sources" OFF)
 option(DIFFVG_DISABLE_GPU_SORT "Disable GPU Thrust sort (build host-only fallback)" OFF)
+set(DIFFVG_CUDA_HOST_CCBIN "" CACHE FILEPATH "Path to nvcc host compiler (passed as -ccbin)")
 
 # Use modern Python discovery (works with Python 3.10 - 3.12 and beyond)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
@@ -57,6 +74,24 @@ if(DIFFVG_CUDA)
         message(STATUS "Build with CUDA support")
         # Avoid nvcc adding forward-unknown flag
         set(CMAKE_CUDA_COMPILE_OPTIONS_FORWARD_UNKNOWN_TO_HOST_COMPILER "" CACHE STRING "" FORCE)
+        # Default nvcc host compiler (-ccbin) to clang++ when available
+        if(DIFFVG_CUDA_HOST_CCBIN STREQUAL "")
+            find_program(_DIFFVG_CLANGXX clang++)
+            if(_DIFFVG_CLANGXX)
+                set(DIFFVG_CUDA_HOST_CCBIN "${_DIFFVG_CLANGXX}")
+            endif()
+        endif()
+        # Honor requested host compiler for nvcc (-ccbin)
+        if(DEFINED CMAKE_CUDA_HOST_COMPILER AND NOT CMAKE_CUDA_HOST_COMPILER STREQUAL "")
+            if(DIFFVG_CUDA_HOST_CCBIN STREQUAL "")
+                set(DIFFVG_CUDA_HOST_CCBIN "${CMAKE_CUDA_HOST_COMPILER}")
+            endif()
+        endif()
+        if(NOT DIFFVG_CUDA_HOST_CCBIN STREQUAL "")
+            # Set before enabling the CUDA language so CMake/nvcc pick it consistently
+            set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -ccbin=${DIFFVG_CUDA_HOST_CCBIN}")
+            message(STATUS "Using nvcc host compiler via -ccbin=${DIFFVG_CUDA_HOST_CCBIN}")
+        endif()
         enable_language(CUDA)
         # Prefer native CMake CUDA; require toolkit for cudart linkage
         find_package(CUDAToolkit QUIET)
@@ -67,14 +102,65 @@ if(DIFFVG_CUDA)
             set(CAME_CUDA_STD_TMP 17)
             set(CMAKE_CUDA_STANDARD ${CAME_CUDA_STD_TMP})
             set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-            # Keep nvcc stable on large TUs by not forwarding unknown flags
-            # Control via policy CMP0146; do not inject additional flags that
-            # might be forwarded to GCC by nvcc.
+            # Keep nvcc stable on large TUs by not forwarding unknown flags.
+            # Despite CMP0146=OLD, newer CMake may still inject the flag via
+            # CMAKE_CUDA_FLAGS*. Forcefully strip it from all configs.
             set(CMAKE_CUDA_FORWARD_UNKNOWN_TO_HOST_COMPILER OFF)
+            foreach(_cfg "" "_RELEASE" "_RELWITHDEBINFO" "_DEBUG" "_MINSIZEREL")
+                if(DEFINED CMAKE_CUDA_FLAGS${_cfg})
+                    string(REPLACE "--forward-unknown-to-host-compiler" "" CMAKE_CUDA_FLAGS${_cfg} "${CMAKE_CUDA_FLAGS${_cfg}}")
+                    string(REPLACE "-forward-unknown-to-host-compiler"  "" CMAKE_CUDA_FLAGS${_cfg} "${CMAKE_CUDA_FLAGS${_cfg}}")
+                    set(CMAKE_CUDA_FLAGS${_cfg} "${CMAKE_CUDA_FLAGS${_cfg}}" CACHE STRING "CUDA flags" FORCE)
+                endif()
+            endforeach()
             # Ensure we link against the shared CUDA runtime only (avoid cudart_static/cudadevrt)
             set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
             # Determine CUDA architectures robustly
-            # Priority: CMAKE_CUDA_ARCHITECTURES (user) > TORCH_CUDA_ARCH_LIST env > DIFFVG_CUDA_ARCHS env > default
+            # Default policy: auto-detect via PyTorch or nvidia-smi and set it.
+            # Users can override by passing -DCMAKE_CUDA_ARCHITECTURES=... or
+            # disabling auto-detect with -DDIFFVG_AUTO_DETECT_CUDA_ARCH=OFF.
+            option(DIFFVG_AUTO_DETECT_CUDA_ARCH "Auto-detect CUDA arch using torch/nvidia-smi" ON)
+
+            if(DIFFVG_AUTO_DETECT_CUDA_ARCH)
+                # Try PyTorch first (uses the Python we already found)
+                set(_DIFFVG_TORCH_ARCH_CMD "import sys\ntry:\n import torch\n ok=torch.cuda.is_available()\nexcept Exception:\n ok=False\nif not ok:\n sys.exit(2)\narches=sorted({10*m+n for i in range(torch.cuda.device_count()) for m,n in [torch.cuda.get_device_capability(i)]})\nprint(' '.join(str(a) for a in arches))\n")
+                execute_process(
+                    COMMAND ${Python_EXECUTABLE} -c "${_DIFFVG_TORCH_ARCH_CMD}"
+                    RESULT_VARIABLE _TORCH_ARCH_RES
+                    OUTPUT_VARIABLE _TORCH_ARCH_OUT
+                    ERROR_QUIET
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+                set(_AUTO_ARCH_LIST "")
+                if(_TORCH_ARCH_RES EQUAL 0 AND NOT _TORCH_ARCH_OUT STREQUAL "")
+                    string(REPLACE " " ";" _AUTO_ARCH_LIST "${_TORCH_ARCH_OUT}")
+                else()
+                    # Fallback to nvidia-smi
+                    execute_process(
+                        COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader
+                        RESULT_VARIABLE _SMI_RES
+                        OUTPUT_VARIABLE _SMI_OUT
+                        ERROR_QUIET
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+                    if(_SMI_RES EQUAL 0 AND NOT _SMI_OUT STREQUAL "")
+                        # Convert lines like "8.9" into 89; allow one per line
+                        set(_AUTO_ARCH_LIST "")
+                        foreach(_l IN LISTS _SMI_OUT)
+                            string(REPLACE "\n" ";" _tmp "${_l}")
+                        endforeach()
+                        if(NOT _tmp STREQUAL "")
+                            foreach(_cc IN LISTS _tmp)
+                                string(REPLACE "." "" _a "${_cc}")
+                                list(APPEND _AUTO_ARCH_LIST "${_a}")
+                            endforeach()
+                        endif()
+                    endif()
+                endif()
+                if(NOT _AUTO_ARCH_LIST STREQUAL "")
+                    set(CMAKE_CUDA_ARCHITECTURES "${_AUTO_ARCH_LIST}" CACHE STRING "CUDA architectures" FORCE)
+                    message(STATUS "Auto-detected CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+                endif()
+            endif()
+            # If auto-detect didn't produce anything, allow env variables
             if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
                 set(_ENV_ARCH_LIST "")
                 if(DEFINED ENV{TORCH_CUDA_ARCH_LIST})
@@ -89,6 +175,8 @@ if(DIFFVG_CUDA)
                     foreach(a IN LISTS _ENV_ARCH_LIST)
                         string(REGEX REPLACE "^sm_" "" a "${a}")
                         string(REGEX REPLACE "^compute_" "" a "${a}")
+                        string(REGEX REPLACE "\+PTX$" "" a "${a}")
+                        string(REPLACE "." "" a "${a}")
                         list(APPEND _ARCH_LIST "${a}")
                     endforeach()
                     set(CMAKE_CUDA_ARCHITECTURES "${_ARCH_LIST}" CACHE STRING "CUDA architectures" FORCE)
@@ -115,6 +203,8 @@ if(DIFFVG_CUDA)
                     endif()
                 endif()
             endif()
+            # Report selected architectures
+            message(STATUS "Using CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
         endif()
     endif()
 else()
@@ -169,6 +259,8 @@ if(NOT MSVC)
   add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fvisibility=hidden>)
   add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wno-unknown-pragmas>)
   add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall>)
+  # Ensure high optimization for host C++ sources in Release
+  add_compile_options($<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3>)
   if(DIFFVG_NATIVE)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-march=native>)
   endif()
@@ -210,10 +302,6 @@ set(SRCS atomic.h
          shape.cpp)
 
 add_library(diffvg MODULE ${SRCS})
-if(NOT DIFFVG_CUDA AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
-    # Redundant with the global fallback but keep explicit in case flags change elsewhere.
-    set_source_files_properties(diffvg.cpp render.cpp render_support.cpp scene.cpp PROPERTIES COMPILE_OPTIONS "-O0")
-endif()
 if(DIFFVG_CUDA)
     target_compile_definitions(diffvg PRIVATE COMPILE_WITH_CUDA)
     if(DIFFVG_DISABLE_GPU_SORT)
@@ -222,9 +310,8 @@ if(DIFFVG_CUDA)
         # Include the tiny CUDA TU implementing Thrust sort only when enabled
         target_sources(diffvg PRIVATE gpu_sort.cu)
         set_source_files_properties(gpu_sort.cu PROPERTIES LANGUAGE CUDA)
-        # Work around nvcc/ptxas instability on CUDA 12.x by lowering ptxas
-        # optimization for this tiny TU only. Other CUDA files remain optimized.
-        set_source_files_properties(gpu_sort.cu PROPERTIES COMPILE_OPTIONS "-Xptxas;-O0")
+        # Allow ptxas default (O3)
+        set_source_files_properties(gpu_sort.cu PROPERTIES COMPILE_OPTIONS "")
     endif()
     # Compile CUDA kernels: default to scene.cpp only for nvcc stability.
     # Compile GPU-launching/Device-calling TUs with NVCC
@@ -232,9 +319,14 @@ if(DIFFVG_CUDA)
     # CUDA-specific flags
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>)
     # Forward host flags to host compiler when compiling CUDA
-    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fvisibility=hidden>)
-    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-unknown-pragmas>)
-    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wall>)
+    # Apply host-side flags via -Xcompiler for CUDA compilations
+    target_compile_options(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fvisibility=hidden>)
+    target_compile_options(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-unknown-pragmas>)
+    target_compile_options(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wall>)
+    # Disable NVTX to avoid host compilation issues in nvtx headers
+    target_compile_definitions(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:NVTX_DISABLE=1>)
+    # Maximize host optimization for CUDA sources
+    target_compile_options(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-O3>)
     if(DIFFVG_FAST_MATH)
         target_compile_options(diffvg PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
     endif()
@@ -320,8 +412,4 @@ install(TARGETS diffvg
         LIBRARY DESTINATION .
         RUNTIME DESTINATION .)
 
-# GCC 12+/13 can exhibit issues optimizing large pybind11 TUs; keep those
-# at a conservative optimization level without impacting kernel or core code.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set_source_files_properties(bindings.cpp diffvg.cpp PROPERTIES COMPILE_OPTIONS "-O0")
-endif()
+# Optimize all sources fully; no per-file caps

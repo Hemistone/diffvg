@@ -4,7 +4,10 @@
 
 #include "ptr.h"
 
-class Scene;
+// Forward declaration must match the primary tag to avoid -Wmismatched-tags
+// warnings on some toolchains (notably under the MSVC ABI). Scene is defined
+// as a struct in scene.h, so forward declare it as struct here.
+struct Scene;
 
 void render(std::shared_ptr<Scene> scene,
             ptr<float> background_image,
@@ -22,4 +25,3 @@ void render(std::shared_ptr<Scene> scene,
             bool use_prefiltering,
             ptr<float> eval_positions,
             int num_eval_positions);
-
