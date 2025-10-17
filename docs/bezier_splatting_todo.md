@@ -13,7 +13,7 @@ Preintegration Prep (Serialization & Cache)
 
 - [done] Extend `pydiffvg.serialize_scene` with an opt-in path that preserves tensors on `pydiffvg.get_device()`; keep baseline renderer on CPU while splat backend consumes the flag. (Profiling pending.)
 - [done] Thread a `keep_on_device`/`device` hint through backend selection so splat can request device-resident tensors without touching public APIs.
-- [doing] Audit shape/gradient handling once splat forward/backward exist to confirm autograd stability with GPU-resident tensors.
+- [todo] Audit shape/gradient handling once splat forward/backward exist to confirm autograd stability with GPU-resident tensors.
 - [todo] Record profiling numbers (CPU vs CUDA) before/after enabling `keep_on_device` in the splat path to quantify the bandwidth win.
 
 Phases
@@ -27,24 +27,24 @@ Phases
 
 1) Forward (Open Strokes)
 
-- [todo] New module `pydiffvg/render_splat.py` with `SplatRenderFunction` (forward only)
-- [todo] Reuse `RenderFunction.serialize_scene` to gather tensors; stay in PyTorch after serialization (no baseline renderer calls)
-- [todo] Allocate tensors on `pydiffvg.get_device()`; pull K/R/ρ/tile from `pydiffvg.backend.get_backend_config()`
-- [todo] Decompose paths into Bézier segments; sample t (eq. (3))
-- [todo] Compute μ, σ_x, σ_y, θ (eq. (7)(8)), Σ (eq. (11)), α (eq. (10))
-- [todo] Tiled alpha blending (eq. (9)); Torch implementation (CPU/CUDA) with optional depth sort policy hook
+- [done] New module `pydiffvg/render_splat.py` with `SplatRenderFunction` (forward path + guarded fallbacks)
+- [done] Reuse `pydiffvg.serialize_scene` to gather tensors; keep tensors on-device when supported and downcast to CPU before baseline fallback
+- [done] Allocate tensors on `pydiffvg.get_device()`; pull K/R/ρ/tile from `pydiffvg.backend.get_backend_config()`
+- [done] Decompose paths into Bézier segments; sample t (eq. (3))
+- [done] Compute μ, σ_x, σ_y, θ (eq. (7)(8)), Σ (eq. (11)), α (eq. (10))
+- [done] Tiled alpha blending (eq. (9)); Torch implementation (CPU/CUDA) with optional depth sort policy hook
 - [todo] Unit test “forward sanity” image vs. baseline on simple scenes
 
 2) Backward (Gradients)
 
-- [todo] Wrap forward in `torch.autograd.Function`; save minimal caches (Σ^{-1}, coverage masks, α accumulations)
+- [done] Wrap forward in `torch.autograd.Function`; store lightweight request state and lean on Torch autograd until custom backward lands
 - [todo] Implement custom backward to propagate dL/dμ, dΣ, dα → control points, stroke width, colors
 - [todo] Clamp σ and α in forward/backward to avoid NaNs; respect `torch.cuda.amp` autocast
 - [todo] Gradient check: single cubic stroke, finite-diff validator
 
 3) Closed Fills
 
-- [todo] Paired-curve strip interpolation (eq. (4)(5)(6)); non-uniform tk near boundaries
+- [wip] Constant-color closed paths via radial interior refinement; extend toward paired-curve strip interpolation (eq. (4)(5)(6)) with non-uniform tk near boundaries
 - [todo] Depth policy for occlusion (small-area priority)
 - [todo] Preserve even-odd fill semantics and SVG round-trip at API boundary
 
@@ -59,10 +59,16 @@ Phases
 - [later] Triton/CUDA kernels guarded by feature flags; retain Torch fallback
 - [later] Expose optional CUDA kernels via pybind11 helper while keeping Python entry point stable
 
+Immediate Validation Queue
+
+- [todo] Smoke-test `python apps/single_circle.py` with `DIFFVG_BACKEND=splat` (CPU + CUDA) and capture timing deltas against baseline.
+- [todo] Render a simple open-path optimization loop (e.g., `apps/painterly_rendering.py`) under autograd to confirm gradients remain finite with the splat backend.
+- [todo] Regression images: compare splat vs. baseline outputs on representative SVGs; log acceptable error bounds.
+
 6) Integration & Determinism
 
-- [todo] Thread `SceneOptions.seed` through sampling to guarantee deterministic runs
-- [todo] Ensure backend toggle (`pydiffvg.set_backend`) leaves baseline behavior unchanged when unset
+- [done] Thread `SceneOptions.seed` through sampling to guarantee deterministic runs
+- [doing] Ensure backend toggle (`pydiffvg.set_backend`) leaves baseline behavior unchanged when unset (baseline regression pass pending)
 
 Validation & Acceptance
 

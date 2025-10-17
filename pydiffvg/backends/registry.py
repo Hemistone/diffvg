@@ -39,18 +39,12 @@ def _baseline_api() -> RenderAPI:
 
 
 def _splat_api() -> RenderAPI:
-    # Placeholder until pydiffvg.render_splat lands.
-    # Keep a friendly error if someone tries to use it early.
-    def _not_ready(*_args, **_kwargs):  # type: ignore[unused-ignore]
-        raise NotImplementedError(
-            "Bézier Splatting backend is not implemented yet. "
-            "See docs/bezier_splatting_todo.md for progress."
-        )
+    from .. import render_splat as _splat
 
     return RenderAPI(
-        serialize_scene=_not_ready,
-        apply=_not_ready,
-        render_grad=_not_ready,
+        serialize_scene=_splat.serialize_scene,
+        apply=_splat.apply,
+        render_grad=_splat.render_grad,
         prefer_device_serialization=True,
     )
 
