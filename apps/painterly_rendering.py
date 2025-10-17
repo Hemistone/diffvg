@@ -14,7 +14,6 @@ from pathlib import Path
 import pydiffvg
 import skimage
 import skimage.io
-import ttools.modules
 import torch
 
 from single_utils import create_run_context, log_run_configuration
@@ -27,7 +26,35 @@ def main(args):
     use_gpu = torch.cuda.is_available()
     pydiffvg.set_use_gpu(use_gpu)
 
-    perception_loss = ttools.modules.LPIPS().to(pydiffvg.get_device())
+    # Initialize LPIPS loss (prefer PIQ if requested and available)
+    perception_loss = None
+    if args.use_lpips_loss:
+        device = pydiffvg.get_device()
+        try:
+            import piq  # type: ignore
+
+            class _LPIPSAdapter(torch.nn.Module):
+                """Wrap PIQ's LPIPS to accept inputs in [0, 1].
+
+                PIQ's LPIPS expects inputs normalized to [-1, 1]. This adapter
+                keeps the rest of the pipeline unchanged by converting ranges.
+                """
+
+                def __init__(self):
+                    super().__init__()
+                    # Use default backbone (VGG) and mean reduction
+                    self.loss = piq.LPIPS(reduction="mean")
+
+                def forward(self, x, y):
+                    x_n = x * 2.0 - 1.0
+                    y_n = y * 2.0 - 1.0
+                    return self.loss(x_n, y_n)
+
+            perception_loss = _LPIPSAdapter().to(device)
+        except Exception as e:
+            raise RuntimeError(
+                "--use_lpips_loss requested but 'piq' is not available. Install with 'pip install piq'."
+            ) from e
 
     target_path = Path(args.target)
     target = torch.from_numpy(skimage.io.imread(str(target_path))).to(torch.float32) / 255.0

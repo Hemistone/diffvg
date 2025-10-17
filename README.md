@@ -210,6 +210,8 @@ e.g.,
 python painterly_rendering.py imgs/fallingwater.jpg --num_paths 2048 --max_width 4.0 --use_lpips_loss
 ```
 
+Note: `--use_lpips_loss` uses PIQ’s `LPIPS` implementation under the hood. Ensure `piq` is installed in your environment (`pip install piq`). Inputs are kept in [0,1] and internally normalized to [-1,1] for PIQ.
+
 Image vectorization
 
 ```
@@ -221,6 +223,8 @@ e.g.,
 ```
 python refine_svg.py imgs/flower.svg imgs/flower.jpg
 ```
+
+Note: When `--use_lpips_loss` is provided, PIQ’s `LPIPS` is used. Install with `pip install piq` if it is missing.
 
 Seam carving
 

@@ -29,6 +29,7 @@ torchvision>=0.24.0
 # Optional: example apps
 # ----------------------
 # Uncomment as needed to run scripts in apps/.
+piq # Support various perceptuals use in painterly_rendering.py
 #tqdm>=4.66
 #imageio>=2.31
 #visdom>=0.2
@@ -42,4 +43,3 @@ torchvision>=0.24.0
 #wget>=3.2
 #scikit-learn>=1.4
 #svgwrite>=1.4  # transitively from svgpathtools, listed here for convenience
-#torch-tools>=0.1.9  # ttools; optional helpers used in some examples

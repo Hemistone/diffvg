@@ -1,13 +1,34 @@
 import pydiffvg
 import argparse
-import ttools.modules
 import torch
 import skimage.io
 
 gamma = 1.0
 
 def main(args):
-    perception_loss = ttools.modules.LPIPS().to(pydiffvg.get_device())
+    # Initialize LPIPS loss (PIQ only) when requested
+    perception_loss = None
+    if args.use_lpips_loss:
+        try:
+            import piq  # type: ignore
+
+            class _LPIPSAdapter(torch.nn.Module):
+                """Wrap PIQ's LPIPS to accept inputs in [0, 1]."""
+
+                def __init__(self):
+                    super().__init__()
+                    self.loss = piq.LPIPS(reduction="mean")
+
+                def forward(self, x, y):
+                    x_n = x * 2.0 - 1.0
+                    y_n = y * 2.0 - 1.0
+                    return self.loss(x_n, y_n)
+
+            perception_loss = _LPIPSAdapter().to(pydiffvg.get_device())
+        except Exception as e:
+            raise RuntimeError(
+                "--use_lpips_loss requested but 'piq' is not available. Install with 'pip install piq'."
+            ) from e
 
     target = torch.from_numpy(skimage.io.imread(args.target)).to(torch.float32) / 255.0
     target = target.pow(gamma)
