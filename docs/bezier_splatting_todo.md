@@ -9,6 +9,13 @@ Goals
 - Add a Bézier Splatting renderer as an alternative backend without changing the public pydiffvg API.
 - Deliver immediate GPU speedups for open curves; extend to closed fills; keep baseline renderer intact.
 
+Preintegration Prep (Serialization & Cache)
+
+- [done] Extend `pydiffvg.serialize_scene` with an opt-in path that preserves tensors on `pydiffvg.get_device()`; keep baseline renderer on CPU while splat backend consumes the flag. (Profiling pending.)
+- [done] Thread a `keep_on_device`/`device` hint through backend selection so splat can request device-resident tensors without touching public APIs.
+- [doing] Audit shape/gradient handling once splat forward/backward exist to confirm autograd stability with GPU-resident tensors.
+- [todo] Record profiling numbers (CPU vs CUDA) before/after enabling `keep_on_device` in the splat path to quantify the bandwidth win.
+
 Phases
 
 0) Scaffold & Switches

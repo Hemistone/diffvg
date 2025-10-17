@@ -59,14 +59,9 @@ Backlog (small, incremental tasks)
 - [done] Improve error messages for non-closed paths with fill (actionable hints)
 - [done] Add CONTRIBUTING notes for CPU vs CUDA builds and debugging tips
 
-### Next Up — Serialization & Renderer Cache
+### Bézier Splatting Prep
 
-- [doing] Extend `pydiffvg.serialize_scene` with an opt-in path that preserves tensors on `pydiffvg.get_device()` to avoid host round-trips before rendering. (`keep_on_device` flag landed; profiling + rollout pending.)
-- [done] Thread a `keep_on_device`/`device` hint from `RenderFunction.serialize_scene` and the backend registry so both baseline and future splat backends can request device-resident tensors.
-- [doing] Audit shape/gradient handling to ensure gradients and autograd still behave when tensors remain on GPU (baseline guard in place; full checks once splat backend lands).
-- [done] Teach `pydiffvg.Renderer` to cache the serialized arg tuple keyed by immutable shape data so repeated renders reuse buffers regardless of backend selection.
-- [todo] Record profiling numbers (CPU vs CUDA) before/after the serializer change to confirm the speedup and catch regressions.
-
+Serialization/cache items specific to the splatting backend now live under `docs/bezier_splatting_todo.md` (“Preintegration Prep”).
 
 Proposed First Milestone (Week 1)
 
