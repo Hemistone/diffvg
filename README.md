@@ -16,7 +16,7 @@ diffvg is a differentiable rasterizer for 2D vector graphics. See the webpage fo
 
 PyTorch-only. TensorFlow support has been removed.
 
-We use a PEP 517 build with CMake (scikit-build-core). Poetry is deprecated.
+We use a PEP 517 build with CMake (scikit-build-core). Legacy `setup.py` builds are removed.
 
 Important: activate the Python environment you intend to use before running any `pip`/`uv` commands to avoid mixing environments.
 
@@ -32,7 +32,7 @@ Important: activate the Python environment you intend to use before running any 
           - `curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc | sudo gpg --dearmor -o /etc/apt/keyrings/kitware-archive-keyring.gpg`
           - `echo "deb [signed-by=/etc/apt/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/kitware.list`
           - `sudo apt-get update && sudo apt-get install -y cmake`
-      - CUDA Toolkit 12.x: Install from NVIDIA’s apt repositories for your distro (recommended) or use the official runfile installer.
+      - CUDA Toolkit 13.x: Install from NVIDIA’s apt repositories for your distro (recommended) or use the official runfile installer.
 
   - Install uv without global pip
 
@@ -58,8 +58,8 @@ Important: activate the Python environment you intend to use before running any 
 
 Install PyTorch/torchvision first if you need CUDA wheels (recommended):
 
-  - CUDA 12.4+ wheels: `uv pip install --index-url https://download.pytorch.org/whl/cu124 'torch>=2.4,<2.6' 'torchvision>=0.19,<0.21'`
-  - CPU-only wheels: `uv pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.4,<2.6' 'torchvision>=0.19,<0.21'`
+  - CUDA 13.0 wheels: `uv pip install --index-url https://download.pytorch.org/whl/cu130 'torch>=2.9' 'torchvision>=0.24'`
+  - CPU-only wheels: `uv pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.9' 'torchvision>=0.24'`
 
 ### B) Build and install diffvg into venv (recommended)
 
@@ -75,7 +75,7 @@ Install PyTorch/torchvision first if you need CUDA wheels (recommended):
 
 Notes
 
-  - CUDA Toolkit 12.x+ must be installed and `nvcc` available for the CUDA build.
+  - CUDA Toolkit 13.x must be installed and `nvcc` available for the CUDA build.
   - We source Thrust/CCCL headers from the CUDA Toolkit for both CPU and CUDA builds when available. For CPU-only builds without the Toolkit, install a system Thrust and ensure its include path is visible to CMake.
   - GPU architectures: defaults to `89`. Set explicitly with `CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=75;86;89"`.
   - You can also set `TORCH_CUDA_ARCH_LIST` or `DIFFVG_CUDA_ARCHS` (e.g. `80;86`).
@@ -92,7 +92,7 @@ uv users
 
 ### D) Manual CMake build (Ninja) + wheel
 
-  - Prereqs: `cmake` (\>=3.25), `ninja`, a C++14 compiler, and for CUDA builds a CUDA Toolkit 12.x with `nvcc`.
+  - Prereqs: `cmake` (\>=3.25), `ninja`, a C++14 compiler, and for CUDA builds a CUDA Toolkit 13.x with `nvcc`.
   - Note: You must have `pybind11>=3.0.1` available (e.g., `pip install pybind11` in your active environment) or pass `-Dpybind11_DIR=$(python -m pybind11 --cmakedir)` to CMake.
   - Configure + build (GPU example):
       - `mkdir -p build && cd build`
@@ -108,7 +108,7 @@ uv users
 
 Compatibility
 
-  - With CUDA 12+, very old GPU targets (e.g., 5.2) are avoided by default to prevent nvcc crashes. Override arches if needed: `-DCMAKE_CUDA_ARCHITECTURES=75;86;89`.
+  - With CUDA 13+, very old GPU targets (e.g., 5.2) are avoided by default to prevent nvcc crashes. Override arches if needed: `-DCMAKE_CUDA_ARCHITECTURES=75;86;89`.
 
 # Troubleshooting
 
@@ -116,16 +116,21 @@ Compatibility
   - CMake not found/too old: Prefer system install via apt (`sudo apt-get install cmake`) or the Kitware APT repo (see above). Verify with `cmake --version`.
   - Ninja not found: Prefer apt (`sudo apt-get install ninja-build`), or omit `-G Ninja` to use Makefiles/Visual Studio. As a last resort, install via `pip` inside your venv.
   - PyTorch missing: Build requires PyTorch. Install Torch/Torchvision first (see A) for CUDA/CPU indices).
-  - CUDA toolkit not detected: Ensure `nvcc` is on `PATH` and the CUDA Toolkit 12.x is installed. You can also point CMake explicitly: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`.
+  - CUDA toolkit not detected: Ensure `nvcc` is on `PATH` and the CUDA Toolkit 13.x is installed. You can also point CMake explicitly: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`.
   - Unsupported GPU arch: If you see errors like `unsupported gpu architecture`, set `-DCMAKE_CUDA_ARCHITECTURES=75;86;89` (or a list matching your GPUs) or export `TORCH_CUDA_ARCH_LIST="75;86;89"`.
   - CPU-only Thrust include path: Without a CUDA Toolkit, provide Thrust headers or install a system Thrust and set `-DTHRUST_INCLUDE_DIR=/path/to/thrust`.
   - Build isolation quirks: If your toolchain is not discovered during isolated builds, use `pip install --no-build-isolation .` (or `uv pip install --no-build-isolation .`).
 
 # Building in debug mode
 
-```
-python setup.py build --debug install
-```
+Use scikit-build via pip and pass CMake debug flags.
+
+- CUDA (default):
+  - `CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Debug" pip install -v .`
+- CPU-only:
+  - `CMAKE_ARGS="-DDIFFVG_CUDA=0 -DCMAKE_BUILD_TYPE=Debug" pip install -v .`
+
+Optional sanitizers (host code only): `CMAKE_ARGS="-DDIFFVG_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug" pip install -v .`
 
 # Run
 

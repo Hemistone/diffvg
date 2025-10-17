@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.23)
 
 if(POLICY CMP0146)
-    # Avoid passing '--forward-unknown-to-host-compiler' to nvcc; CUDA 12.8
-    # can segfault when the flag is present on large translation units.
+    # Avoid passing '--forward-unknown-to-host-compiler' to nvcc; recent CUDA 13.x
+    # toolchains can be unstable with this flag on large translation units.
     cmake_policy(SET CMP0146 OLD)
 endif()
 
@@ -68,7 +68,7 @@ if(DIFFVG_CUDA)
         message(WARNING "CUDA compiler not found. Building without CUDA support.")
         set(DIFFVG_CUDA OFF)
     else()
-        # Newer CMake releases default this to ON (CMP0146 NEW) which can make nvcc 12.x + GCC 12 segfault.
+        # Newer CMake releases default this to ON (CMP0146 NEW) which can make nvcc 13.x + GCC 12 segfault.
         set(CMAKE_CUDA_FORWARD_UNKNOWN_TO_HOST_COMPILER OFF CACHE BOOL
             "Do not forward unknown host flags to nvcc (stability workaround)" FORCE)
         message(STATUS "Build with CUDA support")
@@ -185,7 +185,7 @@ if(DIFFVG_CUDA)
                     set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures" FORCE)
                 endif()
             endif()
-            # Safety override: CUDA 12+ has issues with very old arch (e.g., 52). Avoid < 70 by default.
+            # Safety override: CUDA 12+ (including 13.x) has issues with very old arch (e.g., 52). Avoid < 70 by default.
             if(DEFINED CUDAToolkit_VERSION AND CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.0)
                 set(_ARCHS_FILTERED "")
                 foreach(a IN LISTS CMAKE_CUDA_ARCHITECTURES)

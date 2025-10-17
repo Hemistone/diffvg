@@ -11,7 +11,7 @@ Current Layout (quick map)
 - C++ core in repo root: `diffvg.cpp` (large), `scene.cpp` (CUDA TU), headers under root.
 - Python API in `pydiffvg/`: rendering (`render_pytorch.py`), shapes/colors/utilities, SVG parse/save, device control.
 - Examples in `apps/`; convenience scripts in `scripts/` and Makefile targets for smoke tests.
-- Build via scikit-build/pyproject or `setup.py`; CUDA optional; Thrust from CUDA Toolkit.
+- Build via scikit-build/pyproject; CUDA optional; Thrust from CUDA Toolkit.
 
 Principles
 

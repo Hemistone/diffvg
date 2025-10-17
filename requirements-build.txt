@@ -11,6 +11,3 @@ scikit-build-core>=0.9
 cmake>=3.25
 ninja>=1.11
 pybind11>=3.0.1
-
-# For distutils-based builds (legacy, not recommended) since it is removed after Python 3.12
-setuptools

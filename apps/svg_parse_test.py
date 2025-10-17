@@ -20,7 +20,7 @@ for x in range(100000):
         print(decomp)"""
 
 
-infile='./imgs/note_small.svg'
+infile='./apps/imgs/note_small.svg'
 
 
 canvas_width, canvas_height, shapes, shape_groups = \

@@ -1,6 +1,6 @@
 // Keep the GPU sort implementation minimal and independent of host-only
 // headers to avoid triggering NVCC toolchain issues on some setups (e.g.,
-// WSL2 + CUDA 12.x). Use CUB's DeviceRadixSort, which is part of the CUDA
+// WSL2 + CUDA 13.x). Use CUB's DeviceRadixSort, which is part of the CUDA
 // Toolkit (CCCL) and generally compiles more reliably than the full Thrust
 // sort stack in isolated translation units.
 
@@ -47,4 +47,3 @@ extern "C" void diffvg_gpu_sort_by_key_uint_uint(uint32_t* keys, int* vals, size
     cudaFree(keys_out);
     cudaFree(vals_out);
 }
-
