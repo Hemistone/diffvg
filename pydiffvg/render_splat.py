@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+import math
+from torch.utils.checkpoint import checkpoint as _ckpt
 import os
 import sys
 import atexit
@@ -575,21 +577,47 @@ def _evaluate_segment(segment: SegmentData, t_values: torch.Tensor) -> Tuple[tor
     return pos, tangent
 
 
+def _segment_arclength(segment: SegmentData, device: torch.device, dtype: torch.dtype, samples: int = 8) -> torch.Tensor:
+    """Approximate segment arclength in pixel space by polyline sampling.
+
+    Uses `samples` equal sub-intervals in [0,1]. Deterministic given no RNG.
+    """
+    samples = max(int(samples), 1)
+    # sample samples+1 positions to create `samples` spans
+    t = torch.linspace(0.0, 1.0, steps=samples + 1, device=device, dtype=dtype)
+    pos, _ = _evaluate_segment(segment, t)
+    diffs = pos[1:] - pos[:-1]
+    dist = torch.linalg.norm(diffs, dim=1)
+    return dist.sum()
+
+
 def _sample_path_geometry(
     segments: List[SegmentData],
     config: SplatConfig,
     device: torch.device,
     dtype: torch.dtype,
     generator: Optional[torch.Generator],
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if not segments:
         return (
             torch.empty(0, 2, device=device, dtype=dtype),
             torch.empty(0, 2, device=device, dtype=dtype),
             torch.empty(0, device=device, dtype=dtype),
+            torch.empty(0, device=device, dtype=dtype),
         )
 
-    mid_count = max(int(config.K) - 1, 0)
+    # Length-adaptive mid-sample allocation targeting ~1px spacing
+    # across the curve (deterministic center-of-bin positions).
+    lengths = torch.stack([
+        _segment_arclength(seg, device=device, dtype=dtype, samples=16) for seg in segments
+    ])
+    # Target spacing in pixels (tied loosely to rho): default ≈ 1px
+    target_delta = 1.0
+    mid_counts: List[int] = []
+    for L in lengths:
+        k = int(max(1, math.ceil(float(L.item()) / max(target_delta, 1e-6))))
+        mid_counts.append(max(k - 1, 0))
+
     mu_parts: List[torch.Tensor] = []
     tan_parts: List[torch.Tensor] = []
 
@@ -604,8 +632,10 @@ def _sample_path_geometry(
             pos_corner, tan_corner = _evaluate_segment(segment, corner_t)
             mu_parts.append(pos_corner)
             tan_parts.append(tan_corner)
+        mid_count = mid_counts[idx] if idx < len(mid_counts) else 0
         if mid_count > 0:
-            t_mid = _segment_samples(mid_count, device, dtype, generator)
+            # Use deterministic centered bins to avoid bead jitter.
+            t_mid = _segment_samples(mid_count, device, dtype, None)
             if t_mid.numel() > 0:
                 pos_mid, tan_mid = _evaluate_segment(segment, t_mid)
                 mu_parts.append(pos_mid)
@@ -624,6 +654,7 @@ def _sample_path_geometry(
         return (
             torch.empty(0, 2, device=device, dtype=dtype),
             torch.empty(0, 2, device=device, dtype=dtype),
+            torch.empty(0, device=device, dtype=dtype),
             torch.empty(0, device=device, dtype=dtype),
         )
 
@@ -644,8 +675,9 @@ def _sample_path_geometry(
             dist_next[-1] = dist[0]
             dist_prev[0] = dist[0]
         sigma_x = (dist_next + dist_prev) * 0.5
+    delta_s = sigma_x.clone()
 
-    return mu, tangents, torch.clamp(sigma_x, min=1e-6)
+    return mu, tangents, torch.clamp(sigma_x, min=1e-6), torch.clamp(delta_s, min=1e-8)
 
 
 def _path_to_gaussians(
@@ -655,7 +687,7 @@ def _path_to_gaussians(
     dtype: torch.dtype,
     generator: Optional[torch.Generator],
 ) -> GaussianBatch:
-    mu, tangents, sigma_x = _sample_path_geometry(
+    mu, tangents, sigma_x, delta_s = _sample_path_geometry(
         spec.segments, config, device, dtype, generator
     )
     num_samples = mu.shape[0]
@@ -663,17 +695,45 @@ def _path_to_gaussians(
         raise _SplatUnsupported("path without samples cannot be rasterized")
 
     rho = max(float(config.rho), 1e-6)
+    # Along-curve spread from neighbor spacing, then calibrated by rho.
     sigma_x = torch.clamp(sigma_x / rho, min=1e-3)
 
     width = torch.clamp(spec.stroke_width.reshape(-1)[0], min=1e-3)
-    sigma_y = torch.ones(num_samples, device=device, dtype=dtype) * (width / (2.0 * rho))
+    # σ_y via FWHM calibration: sigma = width / (2*sqrt(2*ln2))
+    fwhm_coeff = 2.0 * math.sqrt(2.0 * math.log(2.0))  # ≈ 2.35482
+    sigma_y = torch.ones(num_samples, device=device, dtype=dtype) * (width / (fwhm_coeff * rho))
+    # Guard against vanishing width during optimization
+    sigma_y = torch.clamp(sigma_y, min=1e-3)
 
-    tangent_norm = torch.linalg.norm(tangents, dim=1, keepdim=True).clamp_min(1e-6)
-    normalized_tan = tangents / tangent_norm
-    theta = torch.atan2(normalized_tan[:, 1], normalized_tan[:, 0])
+    # Orientation using centered differences for visual smoothness
+    if mu.shape[0] >= 3:
+        diff_fwd = mu[2:] - mu[1:-1]
+        diff_bwd = mu[1:-1] - mu[:-2]
+        cen = diff_fwd + diff_bwd
+        theta = torch.empty(mu.shape[0], device=device, dtype=dtype)
+        # interior: prefer centered direction; fallback to analytic tangent if near-zero
+        cen_norm = torch.linalg.norm(cen, dim=1)
+        mask_good = cen_norm > 1e-8
+        th_cen = torch.atan2(cen[:, 1], cen[:, 0])
+        tnorm_all = torch.linalg.norm(tangents, dim=1, keepdim=True).clamp_min(1e-6)
+        ntan_all = tangents / tnorm_all
+        th_tan_mid = torch.atan2(ntan_all[1:-1, 1], ntan_all[1:-1, 0])
+        theta[1:-1] = torch.where(mask_good, th_cen, th_tan_mid)
+        # Endpoints fall back to analytic tangent
+        theta[0] = torch.atan2(ntan_all[0, 1], ntan_all[0, 0])
+        theta[-1] = torch.atan2(ntan_all[-1, 1], ntan_all[-1, 0])
+    else:
+        tnorm = torch.linalg.norm(tangents, dim=1, keepdim=True).clamp_min(1e-6)
+        ntan = tangents / tnorm
+        theta = torch.atan2(ntan[:, 1], ntan[:, 0])
 
     color_rgb = spec.color_rgb.to(device=device, dtype=dtype).unsqueeze(0).expand(num_samples, -1)
-    opacity = spec.opacity.to(device=device, dtype=dtype).clamp(0.0, 1.0).expand(num_samples)
+    base_o = spec.opacity.to(device=device, dtype=dtype).clamp(0.0, 1.0)
+    # Spacing-aware per-splat opacity using continuous-coverage model:
+    # alpha_i = 1 - (1 - base_o)^(Δs / (beta * sigma_x))
+    beta = torch.tensor(2.5, device=device, dtype=dtype)  # effective overlap width ≈ beta*sigma_x
+    expo = (delta_s / (beta * torch.clamp(sigma_x, min=1e-6))).clamp(min=1e-6)
+    opacity = 1.0 - torch.pow(1.0 - base_o, expo)
 
     return GaussianBatch(
         mu=mu,
@@ -692,7 +752,7 @@ def _fill_to_gaussians(
     dtype: torch.dtype,
     generator: Optional[torch.Generator],
 ) -> GaussianBatch:
-    mu_boundary, tangents, sigma_x = _sample_path_geometry(
+    mu_boundary, tangents, sigma_x, _delta_s = _sample_path_geometry(
         spec.segments, config, device, dtype, generator
     )
     num_samples = mu_boundary.shape[0]
@@ -775,6 +835,99 @@ def _composite_gaussians_full(
         image_alpha = image_alpha + contribution
 
     image_alpha = torch.clamp(image_alpha, 0.0, 1.0)
+    return torch.cat([image_rgb, image_alpha.unsqueeze(-1)], dim=-1)
+
+
+def _composite_gaussians_full_ckpt(
+    mu: torch.Tensor,
+    theta: torch.Tensor,
+    sigma_x: torch.Tensor,
+    sigma_y: torch.Tensor,
+    color_rgb: torch.Tensor,
+    opacity: torch.Tensor,
+    width: int,
+    height: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    chunk: int = 512,
+) -> torch.Tensor:
+    """Checkpointed compositor to reduce activation memory during backward.
+
+    Processes gaussians in ordered chunks; each chunk runs inside a checkpointed
+    function that recomputes its activations in backward rather than storing them.
+    """
+    chunk = max(int(chunk), 1)
+    yy = torch.arange(height, device=device, dtype=dtype) + 0.5
+    xx = torch.arange(width, device=device, dtype=dtype) + 0.5
+    try:
+        grid_y, grid_x = torch.meshgrid(yy, xx, indexing="ij")
+    except TypeError:
+        grid_y, grid_x = torch.meshgrid(yy, xx)
+
+    image_rgb = torch.zeros(height, width, 3, device=device, dtype=dtype)
+    image_alpha = torch.zeros(height, width, device=device, dtype=dtype)
+
+    def chunk_fn(
+        img_rgb_in: torch.Tensor,
+        img_a_in: torch.Tensor,
+        mu_c: torch.Tensor,
+        th_c: torch.Tensor,
+        sx_c: torch.Tensor,
+        sy_c: torch.Tensor,
+        col_c: torch.Tensor,
+        op_c: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # local copies
+        img_rgb = img_rgb_in
+        img_a = img_a_in
+        cos_th = torch.cos(th_c)
+        sin_th = torch.sin(th_c)
+        inv_sx = 1.0 / sx_c
+        inv_sy = 1.0 / sy_c
+        for i in range(mu_c.shape[0]):
+            dx = grid_x - mu_c[i, 0]
+            dy = grid_y - mu_c[i, 1]
+            lx = cos_th[i] * dx + sin_th[i] * dy
+            ly = -sin_th[i] * dx + cos_th[i] * dy
+            exponent = -0.5 * ((lx * inv_sx[i]) ** 2 + (ly * inv_sy[i]) ** 2)
+            g = torch.exp(exponent)
+            a_i = torch.clamp(op_c[i], 0.0, 1.0) * g
+            contrib = (1.0 - img_a) * a_i
+            img_rgb = img_rgb + contrib.unsqueeze(-1) * col_c[i]
+            img_a = img_a + contrib
+        return img_rgb, torch.clamp(img_a, 0.0, 1.0)
+
+    n = mu.shape[0]
+    for start in range(0, n, chunk):
+        end = min(n, start + chunk)
+        # Checkpoint the chunk to drop activations; recompute on backward.
+        try:
+            image_rgb, image_alpha = _ckpt(
+                chunk_fn,
+                image_rgb,
+                image_alpha,
+                mu[start:end],
+                theta[start:end],
+                sigma_x[start:end],
+                sigma_y[start:end],
+                color_rgb[start:end],
+                opacity[start:end],
+                use_reentrant=False,  # required for compatibility with autograd.grad
+            )
+        except TypeError:
+            # Older PyTorch without the kwarg; fallback to default behavior.
+            image_rgb, image_alpha = _ckpt(
+                chunk_fn,
+                image_rgb,
+                image_alpha,
+                mu[start:end],
+                theta[start:end],
+                sigma_x[start:end],
+                sigma_y[start:end],
+                color_rgb[start:end],
+                opacity[start:end],
+            )
+
     return torch.cat([image_rgb, image_alpha.unsqueeze(-1)], dim=-1)
 
 
@@ -1099,7 +1252,46 @@ def _render_backward(
         args_with_grad,
     )
     with torch.enable_grad():
-        image = _render_forward(request)
+        # Use checkpointed compositor to avoid retaining per-Gaussian activations.
+        scene = request.scene
+        device = get_device()
+        dtype = torch.float32
+        if scene.paths:
+            sample_dtype = scene.paths[0].points.dtype
+            if sample_dtype in (torch.float32, torch.float64):
+                dtype = sample_dtype
+        stroke_specs, fill_specs = _gather_specs(scene, device, dtype)
+        batches: List[GaussianBatch] = []
+        if stroke_specs:
+            batches.extend(
+                _path_to_gaussians(spec, request.config, device, dtype, request.generator)
+                for spec in stroke_specs
+            )
+        if fill_specs:
+            batches.extend(
+                _fill_to_gaussians(spec, request.config, device, dtype, request.generator)
+                for spec in fill_specs
+            )
+        mu = torch.cat([b.mu for b in batches], dim=0)
+        theta = torch.cat([b.theta for b in batches], dim=0)
+        sigma_x = torch.cat([b.sigma_x for b in batches], dim=0)
+        sigma_y = torch.cat([b.sigma_y for b in batches], dim=0)
+        color_rgb = torch.cat([b.color_rgb for b in batches], dim=0)
+        opacity = torch.cat([b.opacity for b in batches], dim=0)
+        if request.config.depth_policy == DepthPolicy.small_first:
+            order = torch.argsort(sigma_y)
+            mu = mu[order]; theta = theta[order]; sigma_x = sigma_x[order]; sigma_y = sigma_y[order]
+            color_rgb = color_rgb[order]; opacity = opacity[order]
+        # Default chunk set to 128 for better painterly performance unless overridden
+        chunk_env = os.environ.get("DIFFVG_SPLAT_CHUNK", "128").strip() or "128"
+        try:
+            chunk = int(chunk_env)
+        except Exception:
+            chunk = 128
+        image = _composite_gaussians_full_ckpt(
+            mu, theta, sigma_x, sigma_y, color_rgb, opacity,
+            request.width, request.height, device, dtype, chunk=chunk
+        )
         grad_img_cast = grad_img.to(device=image.device, dtype=image.dtype).contiguous()
         loss = torch.sum(image * grad_img_cast)
     if _debug_enabled():
@@ -1120,7 +1312,12 @@ def _render_backward(
     if active:
         active_slots, active_tensors = zip(*active)
         try:
-            grads_active = torch.autograd.grad(loss, active_tensors, retain_graph=True, allow_unused=True)
+            grads_active = torch.autograd.grad(loss, active_tensors, retain_graph=False, allow_unused=True)
+            # Sanitize numerical issues: replace NaN/Inf in grads to prevent parameter blow-up
+            grads_active = tuple(
+                torch.nan_to_num(g, nan=0.0, posinf=0.0, neginf=0.0) if isinstance(g, torch.Tensor) else g
+                for g in grads_active
+            )
         except RuntimeError as exc:  # pragma: no cover - defensive path, triggers fallback
             raise _SplatUnsupported(f"autograd failure: {exc}") from exc
     else:

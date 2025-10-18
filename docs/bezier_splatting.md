@@ -142,3 +142,30 @@ Notes:
 - (13): Training objective
 
 This note should be sufficient to implement a faithful, performant Bézier Splatting backend inside the modern diffvg repo while keeping pydiffvg API behavior intact.
+
+## Engineering Refinements (Planned)
+
+These are practical enhancements aimed at matching baseline (DiffVG) “crisp” stroke appearance and keeping performance high. They are not required to complete a correct Bézier Splatting implementation but help improve visual parity and stability.
+
+- Flat‑top radial profile (2‑Gaussian mixture)
+  - Goal: approximate a box‑like stroke interior with ~1 px edge roll‑off, reducing the soft halo of a single Gaussian.
+  - Sketch: replace the single radial Gaussian with a minimal mixture: G_core(σy₁, +w₁) + G_ring(σy₂, −w₂), where weights/σ’s are chosen to yield a near‑flat top inside the stroke width while keeping a smooth differentiable boundary.
+  - Rationale: baseline strokes act like a uniform slab plus antialiasing at the edge; a two‑lobe Gaussian basis can closely reproduce that without discontinuities.
+
+- Along‑curve anisotropy control (σx aspect factor)
+  - Goal: reduce longitudinal “airbrush” blur caused by stacking elongated kernels along the tangent.
+  - Sketch: σx = a · Δs with a ∈ (0, 1], decoupling anisotropy from sampling density. Maintain coverage by re‑normalizing per‑splat opacity using the existing spacing‑aware model.
+  - Rationale: preserves density‑invariance while tightening along‑curve sharpness.
+
+- Cap and edge calibration to baseline AA
+  - Goal: match endpoint caps and side edges to the baseline’s antialiasing profile (approximately 1 px of transition).
+  - Sketch: align σy (or the mixture parameters) to produce an edge‑spread comparable to baseline; apply a small cap fan or analytic end‑ellipse if necessary to reproduce round caps.
+
+- Differentiable tiling re‑enable
+  - Goal: regain tiled compositor speed under autograd without in‑place blocking writes.
+  - Sketch: use additive accumulation (scatter/add or blockwise reductions) to avoid graph breaks and keep gradients intact; fall back to full‑frame compositor only as a debug path.
+
+- Validation metrics
+  - Image fidelity: PSNR/SSIM vs baseline across widths/scales.
+  - Edge shape: lineout/ESF/MTF checks on a single straight stroke to quantify sharpness and halo.
+  - Gradient quality: finite‑difference checks on control points, stroke width, color; verify smoothness around joins/caps.

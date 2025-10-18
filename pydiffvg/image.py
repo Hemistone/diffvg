@@ -60,12 +60,14 @@ def imwrite(
         img_rng = np.max(img) - np.min(img)
         if img_rng > 0:
             img = (img - np.min(img)) / img_rng
+    # Sanitize numerics to avoid warnings and file corruption
+    img = np.nan_to_num(img, nan=0.0, posinf=1.0, neginf=0.0)
     img = np.clip(img, 0.0, 1.0)
     if img.ndim==2:
         #repeat along the third dimension
         img=np.expand_dims(img,2)
     img[:, :, :3] = np.power(img[:, :, :3], 1.0/gamma)
-    img_uint8 = (img * 255).astype(np.uint8)
+    img_uint8 = (img * 255).astype(np.uint8, copy=False)
     if _save_with_matplotlib(img_uint8, filename):
         return
     if _save_with_skimage(img_uint8, filename):

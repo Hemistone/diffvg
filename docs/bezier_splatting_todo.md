@@ -25,7 +25,7 @@ Phases
 - [done] Define backend_config (K, R, ρ, tile size, depth policy), defaults + env overrides
 - [todo] Wiring doc links: point contributors at docs/bezier_splatting.md for rationale + API expectations
 
-1) Forward (Open Strokes)
+1a) Forward (Open Strokes)
 
 - [done] New module `pydiffvg/render_splat.py` with `SplatRenderFunction` (forward path + guarded fallbacks)
 - [done] Reuse `pydiffvg.serialize_scene` to gather tensors; keep tensors on-device when supported and downcast to CPU before baseline fallback
@@ -35,18 +35,33 @@ Phases
 - [done] Tiled alpha blending (eq. (9)); Torch implementation (CPU/CUDA) with optional depth sort policy hook
 - [todo] Unit test “forward sanity” image vs. baseline on simple scenes
 
+1b) Quality Hardening (Open Strokes)
+
+- [done] Length-adaptive sampling along arclength. Target ~1px spacing per segment via `K_seg = ceil(L_px/Δ)` with Δ≈1px (deterministic center-of-bin positions). Implemented in `render_splat._sample_path_geometry` using a 16-sample polyline arclength estimate; endpoints preserved.
+- [done] σy calibration from stroke width via FWHM. Use `σ_y = width/(2·√(2ln2)·ρ)` for visually crisp, width-faithful splats (replaces `width/(2·ρ)`).
+- [done] Spacing-aware opacity normalization (local). Per-splat opacity uses a continuous coverage model with local spacing Δs: `α_i = 1 − (1 − α)^(Δs/(β·σx))`, with `β≈2.5` as an effective overlap width. This makes coverage consistent across sampling densities.
+- [done] Centered θ at samples. Use central differences between neighbor sample positions for interior points; endpoints fall back to analytic tangents. This removes polyline-like kinks in orientation.
+- [todo] Round caps/joins approximation. Add endpoint/turn handling to match baseline round caps/joins using a small cap fan or analytic ellipse aligned with the normal; keep minimal extra splats.
+- [todo] Keep tiling differentiable. Rework tiled compositor to use additive accumulation (e.g., scatter/add or blockwise writes) so tiling can remain enabled under autograd; keep the current full-frame fallback as a debug path.
+- [planned] Flat-top radial profile with a 2-Gaussian mixture to approximate a box interior and ~1 px edge rolloff; remove soft halo while preserving differentiability. Guarded by a config flag.
+- [planned] Along-curve anisotropy knob: decouple σx from spacing with `σx = a·Δs`, `a ∈ (0,1]`, and fold into α re-normalization so coverage remains density-invariant.
+- [planned] Cap/edge calibration to baseline AA: match endpoint caps and side-edge sharpness by aligning the edge-spread; optionally add a minimal cap fan or analytic end-ellipse.
+- [planned] Fidelity tests: PSNR/SSIM vs baseline; edge lineouts (ESF/MTF) for straight strokes; small sweep over `ρ`, `a`, and mixture parameters to record matching presets.
+
 2) Backward (Gradients)
 
 - [done] Wrap forward in `torch.autograd.Function`; store lightweight request state and lean on Torch autograd until custom backward lands
 - [todo] Implement custom backward to propagate dL/dμ, dΣ, dα → control points, stroke width, colors
 - [todo] Clamp σ and α in forward/backward to avoid NaNs; respect `torch.cuda.amp` autocast
 - [todo] Gradient check: single cubic stroke, finite-diff validator
+- [todo] Validate grads under length-adaptive sampling and spacing-aware α; ensure smoothness at joints/caps.
 
 3) Closed Fills
 
 - [wip] Constant-color closed paths via radial interior refinement; extend toward paired-curve strip interpolation (eq. (4)(5)(6)) with non-uniform tk near boundaries
 - [todo] Depth policy for occlusion (small-area priority)
 - [todo] Preserve even-odd fill semantics and SVG round-trip at API boundary
+- [todo] Interior σ calibration and α normalization mirroring strokes so filled regions remain crisp; add tests with concave shapes and multiple subpaths.
 
 4) Preallocation & Caching
 
@@ -64,6 +79,8 @@ Immediate Validation Queue
 - [todo] Smoke-test `python apps/single_circle.py` with `DIFFVG_BACKEND=splat` (CPU + CUDA) and capture timing deltas against baseline.
 - [todo] Render a simple open-path optimization loop (e.g., `apps/painterly_rendering.py`) under autograd to confirm gradients remain finite with the splat backend.
 - [todo] Regression images: compare splat vs. baseline outputs on representative SVGs; log acceptable error bounds.
+- [todo] “Crispness” checks: measure PSNR/SSIM vs. baseline on single-stroke scenes across widths and scales; assert no visible bead/blur at default settings.
+- [todo] FD-grad check on points, stroke width, and color for cubic path; tolerance thresholds recorded in repo.
 
 6) Integration & Determinism
 
