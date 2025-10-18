@@ -8,12 +8,15 @@ The script exercises the pieces we have in place today:
    without falling back.
 2. Render a circle to confirm unsupported shapes trigger the explicit
    fallback into the legacy baseline renderer.
+3. Invoke the legacy `pydiffvg.RenderFunction` shim to verify it dispatches
+   through the backend registry (so examples keep working without edits).
 """
 
 from __future__ import annotations
 
 import os
 from typing import Iterable
+import warnings
 
 import torch
 import pydiffvg as d
@@ -88,19 +91,52 @@ def smoke_circle_fallback() -> None:
     )
 
     args = renderer.serialize_scene(w, h, [circle], [group], cache_key="circle")
-    img = _render(renderer, args)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        img = _render(renderer, args)
     assert img.shape == (h, w, 4)
     assert torch.isfinite(img).all()
 
     reasons = getattr(splat._warn_fallback, "_seen", set())
     assert "non-path shapes are not handled yet" in reasons, reasons
+    assert any("non-path shapes" in str(warn.message) for warn in caught)
     print("[splat] non-path fallback: ok (baseline reached as expected)")
+
+
+def smoke_renderfunction_bridge() -> None:
+    """Ensure the legacy RenderFunction shim routes through the backend selector."""
+    d.set_backend("splat")
+    d.set_use_gpu(False)
+    _reset_fallback_cache()
+
+    w = h = 64
+    num_control_points = torch.tensor([0], dtype=torch.int32)
+    points = torch.tensor([[8.0, 12.0], [56.0, 52.0]])
+    path = d.Path(
+        num_control_points=num_control_points,
+        points=points,
+        is_closed=False,
+        stroke_width=torch.tensor(2.0),
+    )
+    group = d.ShapeGroup(
+        shape_ids=torch.tensor([0], dtype=torch.int32),
+        fill_color=None,
+        stroke_color=torch.tensor([0.4, 0.4, 0.9, 1.0]),
+    )
+
+    args = d.RenderFunction.serialize_scene(w, h, [path], [group])
+    img = d.RenderFunction.apply(w, h, 1, 1, 0, None, *args)
+    assert img.shape == (h, w, 4)
+    assert torch.isfinite(img).all()
+    assert not getattr(splat._warn_fallback, "_seen", set())
+    print("[splat] RenderFunction shim: ok (routes to splat)")
 
 
 def main() -> None:
     os.environ.setdefault("DIFFVG_BACKEND", "splat")
     smoke_path_stroke()
     smoke_circle_fallback()
+    smoke_renderfunction_bridge()
     print("[splat] splat backend smoke tests all ok")
 
 

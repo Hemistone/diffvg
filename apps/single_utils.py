@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Union
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import pydiffvg
+from pydiffvg.backends.registry import get_api
+
 Number = Union[int, float]
 
 
@@ -99,10 +106,17 @@ class ProgressLogger:
             self._finished = True
 
     def _render(self, line: str) -> None:
-        padding = max(self._printed_chars - len(line), 0)
-        sys.stdout.write("\r" + line + (" " * padding))
-        sys.stdout.flush()
-        self._printed_chars = len(line)
+        trace_env = os.environ.get("DIFFVG_SPLAT_TRACE", "").strip().lower()
+        trace_enabled = bool(trace_env) and trace_env not in ("0", "false", "no", "off")
+        if trace_enabled:
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+            self._printed_chars = 0
+        else:
+            padding = max(self._printed_chars - len(line), 0)
+            sys.stdout.write("\r" + line + (" " * padding))
+            sys.stdout.flush()
+            self._printed_chars = len(line)
 
 
 @dataclass
@@ -188,6 +202,18 @@ def log_run_configuration(
     print(f"[config] {task_name}")
     for key, value in config.items():
         print(f"[config] {key}: {value}")
+    backend = pydiffvg.get_backend()
+    try:
+        api = get_api(backend)
+        backend_impl = api.apply.__module__
+    except Exception:  # pragma: no cover - defensive path
+        backend_impl = "<unavailable>"
+    print(f"[config] backend: {backend} ({backend_impl})")
+    try:
+        import pydiffvg.render_pytorch as _rp
+        print(f"[config] render_pytorch: {_rp.__file__}")
+    except Exception:
+        pass
     keys = env_keys or (
         "DIFFVG_FORCE_GPU",
         "DIFFVG_CUDA",
@@ -196,6 +222,7 @@ def log_run_configuration(
         "DIFFVG_DISABLE_GPU_SORT",
         "TORCH_CUDA_ARCH_LIST",
         "CMAKE_CUDA_ARCHITECTURES",
+        "DIFFVG_SPLAT_TRACE",
     )
     found_any = False
     for key in keys:

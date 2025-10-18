@@ -28,7 +28,7 @@ class RenderAPI:
 
 def _baseline_api() -> RenderAPI:
     # Import locally to avoid import cycles at package import time
-    from ..render_pytorch import RenderFunction as RF
+    from ..render_pytorch import BaselineRenderFunction as RF
 
     return RenderAPI(
         serialize_scene=RF.serialize_scene,

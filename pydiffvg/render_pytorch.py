@@ -2,10 +2,12 @@ import torch
 import diffvg
 import pydiffvg
 import time
+import os
+import sys
 from enum import IntEnum
-import warnings
 from .serialization import serialize_scene as _serialize_scene
 from . import dev as _dev
+from .backend import current_api
 
 # Backward-compat wrapper: keep old API while centralizing the flag
 print_timing = False
@@ -19,7 +21,7 @@ class OutputType(IntEnum):
     color = 1
     sdf = 2
 
-class RenderFunction(torch.autograd.Function):
+class BaselineRenderFunction(torch.autograd.Function):
     """
         The PyTorch interface of diffvg.
     """
@@ -43,7 +45,7 @@ class RenderFunction(torch.autograd.Function):
         if keep_on_device:
             raise NotImplementedError(
                 "The baseline diffvg renderer expects CPU-resident tensors; "
-                "set keep_on_device=False when using RenderFunction directly."
+                "set keep_on_device=False when using BaselineRenderFunction directly."
             )
         # Delegate to extracted helper to keep behavior identical
         # Note: we keep the default filter here to avoid import-time cycles in the helper
@@ -754,4 +756,73 @@ class RenderFunction(torch.autograd.Function):
         return tuple(d_args)
 
 
-__all__ = ["RenderFunction", "OutputType", "set_print_timing"]
+class RenderFunction:
+    """Backend-dispatching shim that preserves the legacy API surface."""
+
+    @staticmethod
+    def serialize_scene(
+        canvas_width,
+        canvas_height,
+        shapes,
+        shape_groups,
+        filter=pydiffvg.PixelFilter(type=diffvg.FilterType.box, radius=torch.tensor(0.5)),
+        output_type=OutputType.color,
+        use_prefiltering=False,
+        eval_positions=torch.tensor([]),
+        *,
+        keep_on_device: bool = False,
+        device: torch.device | str | None = None,
+    ):
+        api = current_api()
+        if not keep_on_device and getattr(api, "prefer_device_serialization", False):
+            keep_on_device = True
+        if keep_on_device and device is None:
+            from .device import get_device
+
+            device = get_device()
+        return api.serialize_scene(
+            canvas_width,
+            canvas_height,
+            shapes,
+            shape_groups,
+            filter,
+            output_type,
+            use_prefiltering,
+            eval_positions,
+            keep_on_device=keep_on_device,
+            device=device,
+        )
+
+    @staticmethod
+    def apply(
+        width,
+        height,
+        num_samples_x,
+        num_samples_y,
+        seed,
+        background_image,
+        *args,
+    ):
+        api = current_api()
+        trace_env = os.environ.get("DIFFVG_SPLAT_TRACE", "").strip().lower()
+        if trace_env and trace_env not in ("0", "false", "no", "off"):
+            sys.stdout.write(f"\n[splat-trace] debug backend dispatch -> {api.apply.__module__}\n")
+            sys.stdout.flush()
+        return api.apply(width, height, num_samples_x, num_samples_y, seed, background_image, *args)
+
+    @staticmethod
+    def render_grad(
+        grad_img,
+        width,
+        height,
+        num_samples_x,
+        num_samples_y,
+        seed,
+        background_image,
+        *args,
+    ):
+        api = current_api()
+        return api.render_grad(grad_img, width, height, num_samples_x, num_samples_y, seed, background_image, *args)
+
+
+__all__ = ["RenderFunction", "BaselineRenderFunction", "OutputType", "set_print_timing"]

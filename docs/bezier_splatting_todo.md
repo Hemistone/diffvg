@@ -68,7 +68,7 @@ Immediate Validation Queue
 6) Integration & Determinism
 
 - [done] Thread `SceneOptions.seed` through sampling to guarantee deterministic runs
-- [doing] Ensure backend toggle (`pydiffvg.set_backend`) leaves baseline behavior unchanged when unset (baseline regression pass pending)
+- [done] Ensure backend toggle (`pydiffvg.set_backend`) leaves baseline behavior unchanged when unset (legacy `RenderFunction` now dispatches through registry; baseline regressions pending)
 
 Validation & Acceptance
 

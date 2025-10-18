@@ -41,7 +41,7 @@ def main() -> None:
     shapes = [path]
     path_group = pydiffvg.ShapeGroup(
         shape_ids=torch.tensor([0]),
-        fill_color=torch.tensor([0.0, 0.0, 0.0, 0.0]),
+        fill_color=None,
         stroke_color=torch.tensor([0.6, 0.3, 0.6, 0.8]),
     )
     shape_groups = [path_group]

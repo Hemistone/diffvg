@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+import os
+import sys
+import atexit
 from typing import Dict, Iterable, List, Optional, Tuple
+from types import SimpleNamespace
 
 import diffvg
 import torch
 
 from .backend import DepthPolicy, SplatConfig, get_backend_config
 from .device import get_device
-from .render_pytorch import OutputType, RenderFunction as _BaselineRF
+from .render_pytorch import OutputType, BaselineRenderFunction as _BaselineRF
 from .serialization import serialize_scene as _serialize_scene
 
 
@@ -309,6 +313,9 @@ def _warn_fallback(reason: str) -> None:
     seen = getattr(_warn_fallback, "_seen", set())
     if key in seen:
         return
+    global _TRACE_FALLBACK
+    _TRACE_FALLBACK += 1
+    _trace(f"fallback to baseline (reason: {reason})")
     message = (
         "Bézier Splatting backend falling back to baseline renderer"
         f" (reason: {reason}). See docs/bezier_splatting_todo.md for progress."
@@ -316,6 +323,101 @@ def _warn_fallback(reason: str) -> None:
     warnings.warn(message, RuntimeWarning, stacklevel=3)
     seen.add(key)
     setattr(_warn_fallback, "_seen", seen)
+
+
+def _trace_settings() -> tuple[bool, int | None]:
+    """Parse DIFFVG_SPLAT_TRACE into (enabled, limit).
+
+    Accepted values:
+    - unset/"", "0", "false", "no", "off" => disabled
+    - "1", "true", "yes", "on" => enabled with default limit (5)
+    - integer string (e.g. "2", "10") => enabled with that limit (<=0 means unlimited)
+    - strings containing "limit=<int>" (case-insensitive) => enabled with that limit
+    """
+    raw = os.environ.get("DIFFVG_SPLAT_TRACE", "").strip()
+    if not raw:
+        return False, None
+    lowered = raw.lower()
+    if lowered in {"0", "false", "no", "off"}:
+        return False, None
+    if "limit=" in lowered:
+        try:
+            limit = int(lowered.split("limit=", 1)[1].strip())
+        except ValueError:
+            limit = 5
+        return True, limit
+    try:
+        limit = int(raw)
+        return True, limit
+    except ValueError:
+        pass
+    if lowered in {"1", "true", "yes", "on"} or lowered:
+        return True, 5
+    return False, None
+
+
+def _debug_enabled() -> bool:
+    enabled, _ = _trace_settings()
+    return enabled
+
+
+def _trace(message: str) -> None:
+    if not _debug_enabled():
+        return
+    sys.stdout.write(f"\n[splat-trace] {message}\n")
+    sys.stdout.flush()
+
+
+_TRACE_FORWARD = 0
+_TRACE_BACKWARD = 0
+_TRACE_FALLBACK = 0
+_TRACE_LIMIT: int | None = None
+
+
+def _trace_limit() -> int:
+    global _TRACE_LIMIT
+    if _TRACE_LIMIT is None:
+        enabled, limit = _trace_settings()
+        if not enabled:
+            _TRACE_LIMIT = 0
+        else:
+            _TRACE_LIMIT = 5 if limit is None else int(limit)
+    return _TRACE_LIMIT
+
+
+def _should_print(count: int) -> bool:
+    limit = _trace_limit()
+    return limit <= 0 or count <= limit
+
+
+def _trace_summary() -> None:
+    if not _debug_enabled():
+        return
+    print(
+        f"[splat-trace] summary: forward={_TRACE_FORWARD} backward={_TRACE_BACKWARD} fallback={_TRACE_FALLBACK}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+atexit.register(_trace_summary)
+
+
+def _align_grad_devices(
+    inputs: Iterable[object], grads: Iterable[Optional[torch.Tensor]]
+) -> Tuple[Optional[torch.Tensor], ...]:
+    aligned: List[Optional[torch.Tensor]] = []
+    for inp, grad in zip(inputs, grads):
+        if grad is None or not isinstance(grad, torch.Tensor):
+            aligned.append(grad)
+            continue
+        if isinstance(inp, torch.Tensor):
+            target_device = inp.device
+            target_dtype = inp.dtype
+            if grad.device != target_device or grad.dtype != target_dtype:
+                grad = grad.to(device=target_device, dtype=target_dtype)
+        aligned.append(grad)
+    return tuple(aligned)
 
 
 def _build_segments(points: torch.Tensor, control_counts: List[int]) -> List[SegmentData]:
@@ -673,10 +775,7 @@ def _composite_gaussians_full(
         image_alpha = image_alpha + contribution
 
     image_alpha = torch.clamp(image_alpha, 0.0, 1.0)
-    output = torch.zeros(height, width, 4, device=device, dtype=dtype)
-    output[..., :3] = image_rgb
-    output[..., 3] = image_alpha
-    return output
+    return torch.cat([image_rgb, image_alpha.unsqueeze(-1)], dim=-1)
 
 
 def _composite_gaussians_tiled(
@@ -783,10 +882,7 @@ def _composite_gaussians_tiled(
         image_rgb[y0:y1, x0:x1] = tile_rgb_work
         image_alpha[y0:y1, x0:x1] = torch.clamp(tile_alpha_work, 0.0, 1.0)
 
-    output = torch.zeros(height, width, 4, device=device, dtype=dtype)
-    output[..., :3] = image_rgb
-    output[..., 3] = image_alpha
-    return output
+    return torch.cat([image_rgb, image_alpha.unsqueeze(-1)], dim=-1)
 
 
 def _render_forward(request: RenderRequest) -> torch.Tensor:
@@ -831,6 +927,16 @@ def _render_forward(request: RenderRequest) -> torch.Tensor:
     if mu.shape[0] == 0:
         raise _SplatUnsupported("no gaussian samples were generated")
 
+    global _TRACE_FORWARD
+    _TRACE_FORWARD += 1
+    if _TRACE_FORWARD == 1:
+        _trace("splat backend active (first render)")
+    if _should_print(_TRACE_FORWARD):
+        _trace(
+            f"render_forward[{_TRACE_FORWARD}] strokes={len(stroke_specs)} fills={len(fill_specs)} "
+            f"gaussians={mu.shape[0]} device={device.type} grad={_scene_requires_grad(scene)}"
+        )
+
     if request.config.depth_policy == DepthPolicy.small_first:
         sort_key = sigma_y
         order = torch.argsort(sort_key)
@@ -841,7 +947,8 @@ def _render_forward(request: RenderRequest) -> torch.Tensor:
         color_rgb = color_rgb[order]
         opacity = opacity[order]
     tile_size = int(request.config.tile)
-    if tile_size > 0:
+    # Disable tiling during autograd to keep graph intact.
+    if tile_size > 0 and not _scene_requires_grad(scene):
         return _composite_gaussians_tiled(
             mu,
             theta,
@@ -896,9 +1003,10 @@ def _enable_gradient_args(args: Iterable[object]) -> Tuple[Tuple[object, ...], L
         points = args_list[idx]
         if not isinstance(points, torch.Tensor):
             raise _SplatUnsupported("expected tensor points for path")
-        points_var = points.detach().clone().requires_grad_(True)
-        args_list[points_idx] = points_var
-        grad_slots.append(GradSlot(arg_index=points_idx, tensor=points_var))
+        if not points.requires_grad:
+            points.requires_grad_(True)
+        args_list[points_idx] = points
+        grad_slots.append(GradSlot(arg_index=points_idx, tensor=points))
         idx += 1
         thickness = args_list[idx]
         idx += 1
@@ -909,9 +1017,10 @@ def _enable_gradient_args(args: Iterable[object]) -> Tuple[Tuple[object, ...], L
         stroke_idx = idx
         stroke_width = args_list[idx]
         if isinstance(stroke_width, torch.Tensor):
-            stroke_var = stroke_width.detach().clone().requires_grad_(True)
-            args_list[stroke_idx] = stroke_var
-            grad_slots.append(GradSlot(arg_index=stroke_idx, tensor=stroke_var))
+            if not stroke_width.requires_grad:
+                stroke_width.requires_grad_(True)
+            args_list[stroke_idx] = stroke_width
+            grad_slots.append(GradSlot(arg_index=stroke_idx, tensor=stroke_width))
         idx += 1
 
     for _group_id in range(num_shape_groups):
@@ -925,9 +1034,10 @@ def _enable_gradient_args(args: Iterable[object]) -> Tuple[Tuple[object, ...], L
             fill_color = args_list[idx]
             if not isinstance(fill_color, torch.Tensor):
                 raise _SplatUnsupported("fill color tensor expected")
-            fill_color_var = fill_color.detach().clone().requires_grad_(True)
-            args_list[color_idx] = fill_color_var
-            grad_slots.append(GradSlot(arg_index=color_idx, tensor=fill_color_var))
+            if not fill_color.requires_grad:
+                fill_color.requires_grad_(True)
+            args_list[color_idx] = fill_color
+            grad_slots.append(GradSlot(arg_index=color_idx, tensor=fill_color))
             idx += 1
         stroke_color_type = args_list[idx]
         idx += 1
@@ -939,9 +1049,10 @@ def _enable_gradient_args(args: Iterable[object]) -> Tuple[Tuple[object, ...], L
         stroke_color = args_list[idx]
         if not isinstance(stroke_color, torch.Tensor):
             raise _SplatUnsupported("stroke color tensor expected")
-        stroke_color_var = stroke_color.detach().clone().requires_grad_(True)
-        args_list[color_idx] = stroke_color_var
-        grad_slots.append(GradSlot(arg_index=color_idx, tensor=stroke_color_var))
+        if not stroke_color.requires_grad:
+            stroke_color.requires_grad_(True)
+        args_list[color_idx] = stroke_color
+        grad_slots.append(GradSlot(arg_index=color_idx, tensor=stroke_color))
         idx += 1
         idx += 1  # use_even_odd_rule
         idx += 1  # shape_to_canvas
@@ -987,15 +1098,44 @@ def _render_backward(
         background_image,
         args_with_grad,
     )
-    image = _render_forward(request)
-    grad_img_cast = grad_img.to(device=image.device, dtype=image.dtype).contiguous()
-    loss = torch.sum(image * grad_img_cast)
+    with torch.enable_grad():
+        image = _render_forward(request)
+        grad_img_cast = grad_img.to(device=image.device, dtype=image.dtype).contiguous()
+        loss = torch.sum(image * grad_img_cast)
+    if _debug_enabled():
+        _trace(
+            f"backward-check image.requires_grad={bool(image.requires_grad)} loss.requires_grad={bool(loss.requires_grad)} device={image.device}"
+        )
     targets = [slot.tensor for slot in grad_slots]
-    grads = torch.autograd.grad(loss, targets, allow_unused=True)
+    active: List[Tuple[GradSlot, torch.Tensor]] = []
+    for slot, tensor in zip(grad_slots, targets):
+        if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
+            active.append((slot, tensor))
+    if _debug_enabled():
+        stats = ", ".join(
+            f"{idx}:{tensor.requires_grad}:{tensor.grad_fn is not None}:{tensor.device}"
+            for idx, tensor in enumerate(targets)
+        )
+        _trace(f"render_backward targets={stats}")
+    if active:
+        active_slots, active_tensors = zip(*active)
+        try:
+            grads_active = torch.autograd.grad(loss, active_tensors, retain_graph=True, allow_unused=True)
+        except RuntimeError as exc:  # pragma: no cover - defensive path, triggers fallback
+            raise _SplatUnsupported(f"autograd failure: {exc}") from exc
+    else:
+        active_slots = ()
+        grads_active = ()
+    global _TRACE_BACKWARD
+    _TRACE_BACKWARD += 1
+    if _should_print(_TRACE_BACKWARD):
+        _trace(f"render_backward[{_TRACE_BACKWARD}] autograd_targets={len(targets)}")
 
     total_args = len(args)
     grad_list: List[Optional[torch.Tensor]] = [None] * (6 + total_args)
-    for slot, grad_value in zip(grad_slots, grads):
+    active_lookup = {id(slot.tensor): grad for slot, grad in zip(active_slots, grads_active)}
+    for slot, tensor in zip(grad_slots, targets):
+        grad_value = active_lookup.get(id(tensor), None)
         if grad_value is None:
             grad_tensor = torch.zeros_like(slot.tensor)
         else:
@@ -1012,7 +1152,7 @@ def apply(
     seed: int,
     background_image: Optional[torch.Tensor],
     *args: object,
-) -> torch.Tensor:
+    ) -> torch.Tensor:
     try:
         return SplatRenderFunction.apply(
             width,
@@ -1026,6 +1166,7 @@ def apply(
     except _SplatUnsupported as exc:
         _warn_fallback(exc.reason)
         cpu_args = _cpu_args(args)
+        _trace("apply delegating to baseline RenderFunction")
         return _BaselineRF.apply(
             width,
             height,
@@ -1046,7 +1187,7 @@ def render_grad(
     seed: int,
     background_image: Optional[torch.Tensor],
     *args: object,
-) -> Tuple[Optional[torch.Tensor], ...]:
+    ) -> Tuple[Optional[torch.Tensor], ...]:
     try:
         return _render_backward(
             grad_img,
@@ -1060,9 +1201,13 @@ def render_grad(
         )
     except _SplatUnsupported as exc:
         _warn_fallback(exc.reason)
+        _trace("render_grad delegating to baseline Backward")
+        # Emulate BaselineRenderFunction forward/backward to obtain gradient tuple
         cpu_args = _cpu_args(args)
-        return _BaselineRF.render_grad(
-            grad_img,
+        ctx = SimpleNamespace()
+        # Forward to build ctx.scene etc.
+        _ = _BaselineRF.forward(
+            ctx,
             width,
             height,
             num_samples_x,
@@ -1071,6 +1216,20 @@ def render_grad(
             background_image,
             *cpu_args,
         )
+        # Backward to assemble gradient tuple for all inputs
+        grad_img_cast = grad_img.to(device=get_device()).contiguous()
+        grads = _BaselineRF.backward(ctx, grad_img_cast)
+        # Align gradient tensors to match the original forward inputs of splat
+        forward_inputs = (
+            width,
+            height,
+            num_samples_x,
+            num_samples_y,
+            seed,
+            background_image,
+            *args,
+        )
+        return _align_grad_devices(forward_inputs, grads)
 
 
 class SplatRenderFunction(torch.autograd.Function):
@@ -1143,9 +1302,12 @@ class SplatRenderFunction(torch.autograd.Function):
             )
         except _SplatUnsupported as exc:
             _warn_fallback(exc.reason)
+            if _debug_enabled():
+                _trace(f"fallback baseline backward (args={len(args)})")
             cpu_args = _cpu_args(args)
-            grads = _BaselineRF.render_grad(
-                grad_img,
+            bctx = SimpleNamespace()
+            _ = _BaselineRF.forward(
+                bctx,
                 request.width,
                 request.height,
                 request.num_samples_x,
@@ -1154,6 +1316,18 @@ class SplatRenderFunction(torch.autograd.Function):
                 request.background_image,
                 *cpu_args,
             )
+            grad_img_cast = grad_img.to(device=get_device()).contiguous()
+            grads = _BaselineRF.backward(bctx, grad_img_cast)
+            forward_inputs = (
+                request.width,
+                request.height,
+                request.num_samples_x,
+                request.num_samples_y,
+                request.seed,
+                request.background_image,
+                *args,
+            )
+            grads = _align_grad_devices(forward_inputs, grads)
         return grads
 
 
@@ -1171,3 +1345,18 @@ __all__ = [
     "ShapeGroupPayload",
     "PaintPayload",
 ]
+def _scene_requires_grad(scene: ScenePayload) -> bool:
+    # Check any path geometry or styling tensors for requires_grad
+    for p in scene.paths:
+        if isinstance(p.points, torch.Tensor) and p.points.requires_grad:
+            return True
+        if isinstance(p.stroke_width, torch.Tensor) and p.stroke_width.requires_grad:
+            return True
+    for g in scene.shape_groups:
+        for paint in (g.fill, g.stroke):
+            if paint.color_type is None:
+                continue
+            for t in paint.params:
+                if isinstance(t, torch.Tensor) and t.requires_grad:
+                    return True
+    return False
