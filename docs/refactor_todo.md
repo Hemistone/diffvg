@@ -88,6 +88,7 @@ Status Legend
 - todo: not started
 - doing: in progress
 - done: merged and verified via examples
+- planned: low priority; not started items which planned to work on 'future works'
 
 ## Optimize SVG Refactor Roadmap
 
