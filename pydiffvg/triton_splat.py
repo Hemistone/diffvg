@@ -190,6 +190,7 @@ __all__ = [
     "is_available",
     "env_wants_triton",
     "composite_gaussians_full_triton",
+    # backward
 ]
 
 
@@ -376,3 +377,149 @@ def composite_gaussians_tiled_triton(
     out_a = torch.clamp(out_a, 0.0, 1.0)
     out_rgb = torch.stack([out_r, out_g, out_b], dim=-1)
     return torch.cat([out_rgb, out_a.unsqueeze(-1)], dim=-1)
+
+
+# ----------------------- Backward (per-tile, color-only v0) -----------------------
+
+def env_wants_triton_backward() -> bool:
+    v = (os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower())
+    return v in ("triton", "trt", "kernel")
+
+
+@triton.jit
+def _backward_tiled_color_kernel(
+    dcol_r_ptr, dcol_g_ptr, dcol_b_ptr, dopa_ptr,
+    mu_x_ptr, mu_y_ptr,
+    cos_ptr, sin_ptr,
+    invsx_ptr, invsy_ptr,
+    opacity_ptr,
+    grad_r_ptr, grad_g_ptr, grad_b_ptr, grad_a_ptr,
+    tile_ptr_ptr, tile_idx_ptr,
+    W: tl.constexpr,
+    H: tl.constexpr,
+    tiles_x: tl.constexpr,
+    tile_size: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+    BLOCK_W: tl.constexpr,
+):
+    ty = tl.program_id(0)
+    tx = tl.program_id(1)
+    x0 = tx * tile_size
+    y0 = ty * tile_size
+    oy = tl.arange(0, BLOCK_H)
+    ox = tl.arange(0, BLOCK_W)
+    iy = y0 + oy[:, None]
+    ix = x0 + ox[None, :]
+    mask = (iy < H) & (ix < W)
+    gy = iy.to(tl.float32) + 0.5
+    gx = ix.to(tl.float32) + 0.5
+
+    tile_id = ty * tiles_x + tx
+    s = tl.load(tile_ptr_ptr + tile_id)
+    e = tl.load(tile_ptr_ptr + tile_id + 1)
+
+    # Loop pixels; accumulate color grads via atomics
+    # Each pixel iterates splats in front-to-back order within the tile.
+    # T is transmittance prefix.
+    rlin = (iy * W + ix)
+    gr = tl.load(grad_r_ptr + rlin, mask=mask, other=0.0)
+    gg = tl.load(grad_g_ptr + rlin, mask=mask, other=0.0)
+    gb = tl.load(grad_b_ptr + rlin, mask=mask, other=0.0)
+    ga = tl.load(grad_a_ptr + rlin, mask=mask, other=0.0)
+
+    T = tl.where(mask, 1.0, 0.0)
+
+    i = s
+    while i < e:
+        gi = tl.load(tile_idx_ptr + i)
+        mu_x = tl.load(mu_x_ptr + gi)
+        mu_y = tl.load(mu_y_ptr + gi)
+        cth = tl.load(cos_ptr + gi)
+        sth = tl.load(sin_ptr + gi)
+        isx = tl.load(invsx_ptr + gi)
+        isy = tl.load(invsy_ptr + gi)
+        o   = tl.load(opacity_ptr + gi)
+
+        dx = gx - mu_x
+        dy = gy - mu_y
+        lx = cth * dx + sth * dy
+        ly = -sth * dx + cth * dy
+        txx = lx * isx
+        tyy = ly * isy
+        expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
+        ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+
+        wprefix = T * ai
+        val_r = tl.sum(gr * wprefix, where=mask)
+        val_g = tl.sum(gg * wprefix, where=mask)
+        val_b = tl.sum(gb * wprefix, where=mask)
+        tl.atomic_add(dcol_r_ptr + gi, val_r)
+        tl.atomic_add(dcol_g_ptr + gi, val_g)
+        tl.atomic_add(dcol_b_ptr + gi, val_b)
+
+        eps = 1e-6
+        g_over_o = tl.where(o > eps, ai / o, 0.0)
+        val_a = tl.sum(ga * T * g_over_o, where=mask)
+        tl.atomic_add(dopa_ptr + gi, val_a)
+
+        T = T * (1.0 - ai)
+
+        i += 1
+
+
+def backward_tiled_color_triton(
+    mu: torch.Tensor,
+    theta: torch.Tensor,
+    sigma_x: torch.Tensor,
+    sigma_y: torch.Tensor,
+    color_rgb: torch.Tensor,
+    opacity: torch.Tensor,
+    tile_ptr: torch.Tensor,
+    tile_idx: torch.Tensor,
+    width: int,
+    height: int,
+    tile_size: int,
+    grad_img: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute dL/dcolor and dL/dopacity in Triton per tile (experimental)."""
+    assert is_available()
+    D = mu.device
+    dtype = torch.float32
+    mu = mu.contiguous().to(dtype)
+    theta = theta.contiguous().to(dtype)
+    sigma_x = sigma_x.contiguous().to(dtype)
+    sigma_y = sigma_y.contiguous().to(dtype)
+    opacity = opacity.contiguous().to(dtype)
+    # Grad image channels (assume HxWxC on device)
+    g = grad_img.to(device=D, dtype=dtype).contiguous()
+    if g.shape[-1] == 4:
+        gr, gg, gb, ga = g[..., 0], g[..., 1], g[..., 2], g[..., 3]
+    else:
+        gr, gg, gb = g[..., 0], g[..., 1], g[..., 2]
+        ga = torch.zeros_like(gr)
+
+    # Outputs
+    N = mu.shape[0]
+    dcol = torch.zeros((N, 3), device=D, dtype=dtype)
+    dopa = torch.zeros((N,), device=D, dtype=dtype)
+
+    cos_th = torch.cos(theta)
+    sin_th = torch.sin(theta)
+    inv_sx = 1.0 / sigma_x
+    inv_sy = 1.0 / sigma_y
+
+    tiles_x = (width + tile_size - 1) // tile_size
+    grid = (int((height + tile_size - 1) // tile_size), int(tiles_x))
+    BLOCK = int(tile_size)
+    _backward_tiled_color_kernel[grid](
+        dcol[:, 0], dcol[:, 1], dcol[:, 2], dopa,
+        mu[:, 0], mu[:, 1],
+        cos_th, sin_th,
+        inv_sx, inv_sy,
+        opacity,
+        gr, gg, gb, ga,
+        tile_ptr, tile_idx,
+        width, height, tiles_x, tile_size,
+        BLOCK_H=BLOCK, BLOCK_W=BLOCK,
+    )
+    return dcol, dopa

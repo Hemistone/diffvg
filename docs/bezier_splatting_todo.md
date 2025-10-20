@@ -33,13 +33,15 @@ Phases
 - [done] Decompose paths into Bézier segments; sample t (eq. (3))
 - [done] Compute μ, σ_x, σ_y, θ (eq. (7)(8)), Σ (eq. (11)), α (eq. (10))
 - [done] Tiled alpha blending (eq. (9)); Torch implementation (CPU/CUDA) with optional depth sort policy hook
+- [done] Triton forward (optional): full‑frame chunked kernel + CSR‑tiled kernel (fp32). Guarded by `DIFFVG_SPLAT_IMPL=triton`; Torch remains the default and reference implementation.
 - [todo] Unit test “forward sanity” image vs. baseline on simple scenes
 
 1b) Quality Hardening (Open Strokes)
 
 - [done] Length-adaptive sampling along arclength. Target ~1px spacing per segment via `K_seg = ceil(L_px/Δ)` with Δ≈1px (deterministic center-of-bin positions). Implemented in `render_splat._sample_path_geometry` using a 16-sample polyline arclength estimate; endpoints preserved.
 - [done] σy calibration from stroke width via FWHM. Use `σ_y = width/(2·√(2ln2)·ρ)` for visually crisp, width-faithful splats (replaces `width/(2·ρ)`).
-- [done] Spacing-aware opacity normalization (local). Per-splat opacity uses a continuous coverage model with local spacing Δs: `α_i = 1 − (1 − α)^(Δs/(β·σx))`, with `β≈2.5` as an effective overlap width. This makes coverage consistent across sampling densities.
+- [done] Spacing-aware opacity normalization (local). Per‑splat opacity can use a continuous coverage model with local spacing Δs: `α_i = 1 − (1 − α)^(Δs/(β·σx))`, with `β≈2.5` as an effective overlap width.
+- [note] For correctness parity and to avoid under‑coverage on some scenes, the current default temporarily uses stroke alpha directly (spacing normalization disabled). Re‑enable behind a flag after Triton backward lands.
 - [done] Centered θ at samples. Use central differences between neighbor sample positions for interior points; endpoints fall back to analytic tangents. This removes polyline-like kinks in orientation.
 - [todo] Round caps/joins approximation. Add endpoint/turn handling to match baseline round caps/joins using a small cap fan or analytic ellipse aligned with the normal; keep minimal extra splats.
 - [todo] Keep tiling differentiable. Rework tiled compositor to use additive accumulation (e.g., scatter/add or blockwise writes) so tiling can remain enabled under autograd; keep the current full-frame fallback as a debug path.
@@ -51,7 +53,9 @@ Phases
 2) Backward (Gradients)
 
 - [done] Wrap forward in `torch.autograd.Function`; store lightweight request state and lean on Torch autograd until custom backward lands
-- [todo] Implement custom backward to propagate dL/dμ, dΣ, dα → control points, stroke width, colors
+- [done] Hybrid per‑tile Torch backward (sparse). Build per‑tile CSR over splats, recompute tile images with the same alpha‑over math, accumulate a single scalar loss, and call `torch.autograd.grad` on original inputs. Enabled by default for grad scenes when tiling>0.
+- [wip] Triton backward (per‑tile) — color + alpha, prefix transmittance T. Kernel computes dL/dcolor and dL/dα per splat in tiles, saves per‑spec counts/ordering in ctx, reduces on device, then bridges to scene inputs via VJP. Opt‑in via `DIFFVG_SPLAT_BWD=triton`.
+- [todo] Full Triton backward (per‑tile). Add suffix scans and implement closed‑form dL/d{μ, θ, σx, σy} in the same kernel; atomically accumulate to SoA grad buffers; remove hybrid Torch work for geometry.
 - [todo] Clamp σ and α in forward/backward to avoid NaNs; respect `torch.cuda.amp` autocast
 - [todo] Gradient check: single cubic stroke, finite-diff validator
 - [todo] Validate grads under length-adaptive sampling and spacing-aware α; ensure smoothness at joints/caps.
@@ -70,15 +74,17 @@ Phases
 
 5) Performance & Kernels (Optional)
 
-- [todo] Profile Torch implementation; identify hotspots (binning/sort/accumulation)
-- [later] Triton/CUDA kernels guarded by feature flags; retain Torch fallback
-- [later] Expose optional CUDA kernels via pybind11 helper while keeping Python entry point stable
+- [done] Profile Torch implementation; identify hotspots (binning/sort/accumulation). Added CSR‑tiled compositor; grid caching; optional Gaussian chunking.
+- [done] Triton forward kernels guarded by feature flags (`DIFFVG_SPLAT_IMPL=triton`), with tiled CSR and full‑frame variants. Torch remains as fallback/reference.
+- [wip] Triton backward kernel (per‑tile) for color + alpha; saves per‑spec offsets and ordering to avoid Python rebuilds.
+- [todo] Triton backward kernel (geometry/width). Add env knobs for `DIFFVG_SPLAT_BLOCK`, `DIFFVG_SPLAT_WARPS`, `DIFFVG_SPLAT_STAGES`; keep SoA + 1D addressing.
+- [todo] Optional CUDA (C++) kernels after Triton parity (keep Python entry stable).
 
 Immediate Validation Queue
 
 - [todo] Smoke-test `python apps/single_circle.py` with `DIFFVG_BACKEND=splat` (CPU + CUDA) and capture timing deltas against baseline.
 - [todo] Render a simple open-path optimization loop (e.g., `apps/painterly_rendering.py`) under autograd to confirm gradients remain finite with the splat backend.
-- [todo] Regression images: compare splat vs. baseline outputs on representative SVGs; log acceptable error bounds.
+- [wip] Regression images: compare splat vs. baseline outputs on representative SVGs; log acceptable error bounds. Recent fixes: disable spacing α by default; grad scenes use tiled compositor by default (commit 2084005). Triton backward (color+α) parity vs. hybrid Torch pending.
 - [todo] “Crispness” checks: measure PSNR/SSIM vs. baseline on single-stroke scenes across widths and scales; assert no visible bead/blur at default settings.
 - [todo] FD-grad check on points, stroke width, and color for cubic path; tolerance thresholds recorded in repo.
 
@@ -100,3 +106,44 @@ Risks & Mitigations
 - Approximation artifacts at edges: document; increase K/R near high curvature; clamp σ
 - Memory growth from many splats: cap per-tile splats; adapt K/R; shard tiles if needed
 - CPU-only runs: keep slow Torch CPU path for tests; don’t block baseline
+
+---
+
+Next Milestone: Full Triton Backward (per‑tile)
+
+Scope
+
+- Keep Triton forward (tiled CSR) as today. Replace the hybrid Torch backward with a Triton per‑tile backward that emits grads for Gaussian parameters; use a Torch VJP to map those to path inputs.
+
+Implementation steps
+
+1) Save forward state (ctx)
+   - SoA params: `mu_x, mu_y, cosθ, sinθ, invσx, invσy, α, color` (fp32, device)
+   - Per‑tile CSR: `tile_ptr, tile_idx, tiles_x, tiles_y, tile_size`
+   - Depth policy permutation per tile (e.g., small_first by σy)
+
+2) Triton backward kernels (per tile)
+   - Compute per‑pixel prefix `T_pre[i]` and suffix `T_suf[i]` transmittance for stable dL/da_i.
+   - Derive dL/d{μ, θ, σx, σy, α, color} using the same rotated‑Gaussian math as forward.
+   - Accumulate per‑tile into global grad buffers via atomics; ensure 1D linear addressing.
+   - Numeric guards: clamp `1−a`≥1e−6, `σ≥1e−3`, use `nan_to_num` on outputs.
+
+3) Bridge to scene inputs
+   - VJP: call `torch.autograd.grad([mu,theta,sigma_x,sigma_y,alpha,color], inputs, grad_outputs=[dmu,…,dalpha,dcolor])` to propagate grads into control points, widths, and colors.
+   - Keep Torch path as fallback for debug; add parity asserts in a debug mode.
+
+4) Tuning & knobs
+   - Env: `DIFFVG_SPLAT_BLOCK`, `DIFFVG_SPLAT_WARPS`, `DIFFVG_SPLAT_STAGES`, tile size.
+   - Optional per‑tile S‑chunking to cap register/memory when many splats overlap a tile.
+
+5) Tests
+   - Parity: Triton backward vs. hybrid Torch backward (PSNR on loss gradients); FD on small scenes.
+   - Stability: WSL2 + GCC/Clang host compiler; recommend `TRITON_HOST_COMPILER=clang++`.
+
+State (as of commits 96f3a45, 2084005)
+
+- Unified tracing via `DIFFVG_SPLAT_TRACE`.
+- Length‑adaptive sampling, FWHM σy, centered θ — in place.
+- Triton forward (full + tiled) — in place; default path still Torch.
+- Hybrid per‑tile Torch backward — in place, default for grad scenes when tiling>0.
+- Spacing‑aware α implemented but disabled by default (coverage issues). Will revisit after Triton backward.

@@ -1183,7 +1183,7 @@ def _composite_gaussians_tiled_diff(
 
     return torch.cat([image_rgb, image_alpha.unsqueeze(-1)], dim=-1)
 
-def _render_forward(request: RenderRequest) -> torch.Tensor:
+def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> torch.Tensor:
     scene = request.scene
     device = get_device()
     dtype = torch.float32
@@ -1235,6 +1235,7 @@ def _render_forward(request: RenderRequest) -> torch.Tensor:
             f"gaussians={mu.shape[0]} device={device.type} grad={_scene_requires_grad(scene)}"
         )
 
+    order: Optional[torch.Tensor] = None
     if request.config.depth_policy == DepthPolicy.small_first:
         sort_key = sigma_y
         order = torch.argsort(sort_key)
@@ -1288,6 +1289,43 @@ def _render_forward(request: RenderRequest) -> torch.Tensor:
         except Exception:
             gchunk = 256
         try:
+            # Save SoA + CSR + per-spec offsets for Triton backward
+            if ctx is not None:
+                tile_size = int(request.config.tile)
+                if tile_size > 0:
+                    tile_ptr, tile_idx, tiles_x, tiles_y = _triton._build_tile_csr(
+                        mu, theta, sigma_x, sigma_y, request.width, request.height, tile_size
+                    )
+                    # Per-spec sample counts and references in same order as 'batches'
+                    spec_counts: List[int] = [int(b.mu.shape[0]) for b in batches]
+                    # Collect references (not expanded) matching batches ordering
+                    color_refs: List[torch.Tensor] = []
+                    opacity_refs: List[torch.Tensor] = []
+                    for spec in stroke_specs:
+                        color_refs.append(spec.color_rgb)
+                        opacity_refs.append(spec.opacity)
+                    for spec in fill_specs:
+                        color_refs.append(spec.color_rgb)
+                        opacity_refs.append(spec.opacity)
+                    setattr(ctx, "splat_saved", {
+                        "mu": mu,
+                        "theta": theta,
+                        "sigma_x": sigma_x,
+                        "sigma_y": sigma_y,
+                        "color_rgb": color_rgb,
+                        "opacity": opacity,
+                        "tile_ptr": tile_ptr,
+                        "tile_idx": tile_idx,
+                        "tiles_x": tiles_x,
+                        "tiles_y": tiles_y,
+                        "tile_size": tile_size,
+                        "width": request.width,
+                        "height": request.height,
+                        "spec_counts": spec_counts,
+                        "color_refs": color_refs,
+                        "opacity_refs": opacity_refs,
+                        "order": order,
+                    })
             if tile_size > 0:
                 return _triton.composite_gaussians_tiled_triton(
                     mu, theta, sigma_x, sigma_y, color_rgb, opacity,
@@ -1838,13 +1876,68 @@ class SplatRenderFunction(torch.autograd.Function):
         )
         ctx.request = request  # type: ignore[attr-defined]
         ctx.extra_args = args  # type: ignore[attr-defined]
-        return _render_forward(request)
+        return _render_forward(request, ctx)
 
     @staticmethod
     def backward(ctx, *grad_outputs: torch.Tensor) -> Tuple[torch.Tensor, ...]:
         (grad_img,) = grad_outputs
         request: RenderRequest = ctx.request  # type: ignore[attr-defined]
         args = ctx.extra_args  # type: ignore[attr-defined]
+        # Triton backward (experimental, color-only v0) if state saved and requested
+        try:
+            saved = getattr(ctx, "splat_saved", None)
+            if saved is not None and _triton.env_wants_triton_backward():
+                mu = saved["mu"]; theta = saved["theta"]; sigma_x = saved["sigma_x"]; sigma_y = saved["sigma_y"]
+                color_rgb = saved["color_rgb"]; opacity = saved["opacity"]
+                tile_ptr = saved["tile_ptr"]; tile_idx = saved["tile_idx"]
+                width = int(saved["width"]); height = int(saved["height"]); tile_size = int(saved["tile_size"])
+                spec_counts = saved.get("spec_counts")
+                color_refs: List[torch.Tensor] = saved.get("color_refs", [])
+                opacity_refs: List[torch.Tensor] = saved.get("opacity_refs", [])
+                # Triton per-tile backward (color + alpha). Geometry grads remain via hybrid path for now.
+                dcolor, dalpha = _triton.backward_tiled_color_triton(
+                    mu, theta, sigma_x, sigma_y, color_rgb, opacity,
+                    tile_ptr, tile_idx, width, height, tile_size,
+                    grad_img,
+                )
+                # If forward sorted splats, unsort grads back to concatenation order
+                order_saved = saved.get("order")
+                if isinstance(order_saved, torch.Tensor) and order_saved.numel() == dcolor.shape[0]:
+                    inv = torch.empty_like(order_saved)
+                    inv[order_saved] = torch.arange(order_saved.numel(), device=order_saved.device, dtype=order_saved.dtype)
+                    inv = inv.to(torch.long)
+                    dcolor = dcolor[inv]
+                    dalpha = dalpha[inv]
+                if spec_counts is None:
+                    raise RuntimeError("Triton backward: missing spec_counts in ctx")
+                # Reduce per-splat grads -> per-spec grads using saved counts
+                per_col = []
+                per_opa = []
+                off = 0
+                for c in spec_counts:
+                    n = int(c)
+                    per_col.append(dcolor[off:off+n].sum(dim=0))
+                    per_opa.append(dalpha[off:off+n].sum())
+                    off += n
+                # VJP to propagate to original input tensors
+                args_with_grad, grad_slots = _enable_gradient_args(args)
+                cat_colors = torch.stack(color_refs, dim=0) if color_refs else torch.empty(0, 3, device=color_rgb.device, dtype=color_rgb.dtype)
+                cat_opac = torch.stack(opacity_refs, dim=0).reshape(-1, 1) if opacity_refs else torch.empty(0, 1, device=color_rgb.device, dtype=color_rgb.dtype)
+                g_col = torch.stack(per_col, dim=0)
+                g_opa = torch.stack(per_opa, dim=0).reshape(-1, 1)
+                vjp_tensors = [cat_colors, cat_opac]
+                input_tensors = [slot.tensor for slot in grad_slots]
+                vjp_grads = torch.autograd.grad(vjp_tensors, input_tensors, grad_outputs=[g_col, g_opa], allow_unused=True)
+                total_args = len(args)
+                grad_list: List[Optional[torch.Tensor]] = [None] * (6 + total_args)
+                for slot, g in zip(grad_slots, vjp_grads):
+                    if g is None:
+                        grad_list[6 + slot.arg_index] = torch.zeros_like(slot.tensor)
+                    else:
+                        grad_list[6 + slot.arg_index] = g.detach()
+                return tuple(grad_list)
+        except Exception as exc:
+            _trace(f"triton backward unavailable: {type(exc).__name__}")
         try:
             grads = render_grad(
                 grad_img,
