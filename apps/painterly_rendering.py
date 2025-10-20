@@ -20,6 +20,23 @@ import torch
 from single_utils import create_run_context, log_run_configuration
 
 
+def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
+    """Composite RGBA to RGB over white.
+
+    Handles premultiplied vs straight-alpha differences between backends:
+    - baseline returns straight RGB (needs multiply by A)
+    - splat returns premultiplied RGB (do NOT multiply by A again)
+    """
+    backend = pydiffvg.get_backend()
+    a = img_rgba[:, :, 3:4].clamp(0.0, 1.0)
+    rgb = img_rgba[:, :, :3]
+    if backend == "splat":
+        premul = rgb  # RGB is already premultiplied in splat backend
+    else:
+        premul = rgb * a  # baseline provides straight (non-premultiplied) RGB
+    return (premul + (1.0 - a)).clamp(0.0, 1.0)
+
+
 gamma = 1.0
 
 
@@ -215,6 +232,7 @@ def main(args):
         None,
         *scene_args,
     )
+    # Save raw RGBA for faithful visualization (viewer composites alpha)
     pydiffvg.imwrite(img.cpu(), str(run.results_dir / "init.png"), gamma=gamma)
 
     points_vars = []
@@ -261,11 +279,11 @@ def main(args):
                 None,
                 *scene_args,
             )
-            img = img[:, :, 3:4] * img[:, :, :3] + torch.ones(
-                img.shape[0], img.shape[1], 3, device=pydiffvg.get_device()
-            ) * (1 - img[:, :, 3:4])
+            # Save raw RGBA for visualization
             pydiffvg.imwrite(img.cpu(), str(run.iter_path(t)), gamma=gamma)
-            img = img[:, :, :3]
+            # Compose to RGB (over white) for loss only
+            img_rgb = _rgba_over_white(img)
+            img = img_rgb
             img = img.unsqueeze(0)
             img = img.permute(0, 3, 1, 2)
             if args.use_lpips_loss:
