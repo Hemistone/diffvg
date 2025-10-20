@@ -1891,43 +1891,22 @@ class SplatRenderFunction(torch.autograd.Function):
                 color_rgb = saved["color_rgb"]; opacity = saved["opacity"]
                 tile_ptr = saved["tile_ptr"]; tile_idx = saved["tile_idx"]
                 width = int(saved["width"]); height = int(saved["height"]); tile_size = int(saved["tile_size"])
-                spec_counts = saved.get("spec_counts")
-                color_refs: List[torch.Tensor] = saved.get("color_refs", [])
-                opacity_refs: List[torch.Tensor] = saved.get("opacity_refs", [])
-                # Triton per-tile backward (color + alpha). Geometry grads remain via hybrid path for now.
-                dcolor, dalpha = _triton.backward_tiled_color_triton(
+                # Triton per-tile backward (full params).
+                dcolor, dalpha, dmu_x, dmu_y, dtheta, disx, disy = _triton.backward_tiled_full_triton(
                     mu, theta, sigma_x, sigma_y, color_rgb, opacity,
                     tile_ptr, tile_idx, width, height, tile_size,
                     grad_img,
                 )
-                # If forward sorted splats, unsort grads back to concatenation order
-                order_saved = saved.get("order")
-                if isinstance(order_saved, torch.Tensor) and order_saved.numel() == dcolor.shape[0]:
-                    inv = torch.empty_like(order_saved)
-                    inv[order_saved] = torch.arange(order_saved.numel(), device=order_saved.device, dtype=order_saved.dtype)
-                    inv = inv.to(torch.long)
-                    dcolor = dcolor[inv]
-                    dalpha = dalpha[inv]
-                if spec_counts is None:
-                    raise RuntimeError("Triton backward: missing spec_counts in ctx")
-                # Reduce per-splat grads -> per-spec grads using saved counts
-                per_col = []
-                per_opa = []
-                off = 0
-                for c in spec_counts:
-                    n = int(c)
-                    per_col.append(dcolor[off:off+n].sum(dim=0))
-                    per_opa.append(dalpha[off:off+n].sum())
-                    off += n
-                # VJP to propagate to original input tensors
+                # VJP bridge directly on saved autograd-connected tensors (no rebuild)
+                # Convert inv-sigma grads to sigma grads
+                dsx = -disx / (sigma_x.clamp_min(1e-6) ** 2)
+                dsy = -disy / (sigma_y.clamp_min(1e-6) ** 2)
                 args_with_grad, grad_slots = _enable_gradient_args(args)
-                cat_colors = torch.stack(color_refs, dim=0) if color_refs else torch.empty(0, 3, device=color_rgb.device, dtype=color_rgb.dtype)
-                cat_opac = torch.stack(opacity_refs, dim=0).reshape(-1, 1) if opacity_refs else torch.empty(0, 1, device=color_rgb.device, dtype=color_rgb.dtype)
-                g_col = torch.stack(per_col, dim=0)
-                g_opa = torch.stack(per_opa, dim=0).reshape(-1, 1)
-                vjp_tensors = [cat_colors, cat_opac]
+                vjp_tensors = [mu, theta, sigma_x, sigma_y, color_rgb, opacity]
+                g_mu = torch.stack([dmu_x, dmu_y], dim=-1)
+                grad_outputs = [g_mu, dtheta, dsx, dsy, dcolor, dalpha]
                 input_tensors = [slot.tensor for slot in grad_slots]
-                vjp_grads = torch.autograd.grad(vjp_tensors, input_tensors, grad_outputs=[g_col, g_opa], allow_unused=True)
+                vjp_grads = torch.autograd.grad(vjp_tensors, input_tensors, grad_outputs=grad_outputs, allow_unused=True)
                 total_args = len(args)
                 grad_list: List[Optional[torch.Tensor]] = [None] * (6 + total_args)
                 for slot, g in zip(grad_slots, vjp_grads):

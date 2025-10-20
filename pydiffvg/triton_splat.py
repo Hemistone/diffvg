@@ -523,3 +523,205 @@ def backward_tiled_color_triton(
         BLOCK_H=BLOCK, BLOCK_W=BLOCK,
     )
     return dcol, dopa
+
+
+@triton.jit
+def _backward_tiled_full_kernel(
+    dcol_r_ptr, dcol_g_ptr, dcol_b_ptr, dopa_ptr,
+    dmu_x_ptr, dmu_y_ptr, dtheta_ptr, disx_ptr, disy_ptr,
+    mu_x_ptr, mu_y_ptr,
+    cos_ptr, sin_ptr,
+    invsx_ptr, invsy_ptr,
+    opacity_ptr,
+    col_r_ptr, col_g_ptr, col_b_ptr,
+    grad_r_ptr, grad_g_ptr, grad_b_ptr, grad_a_ptr,
+    tile_ptr_ptr, tile_idx_ptr,
+    W: tl.constexpr,
+    H: tl.constexpr,
+    tiles_x: tl.constexpr,
+    tile_size: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+    BLOCK_W: tl.constexpr,
+):
+    ty = tl.program_id(0)
+    tx = tl.program_id(1)
+    x0 = tx * tile_size
+    y0 = ty * tile_size
+    oy = tl.arange(0, BLOCK_H)
+    ox = tl.arange(0, BLOCK_W)
+    iy = y0 + oy[:, None]
+    ix = x0 + ox[None, :]
+    mask = (iy < H) & (ix < W)
+    gy = iy.to(tl.float32) + 0.5
+    gx = ix.to(tl.float32) + 0.5
+
+    tile_id = ty * tiles_x + tx
+    s = tl.load(tile_ptr_ptr + tile_id)
+    e = tl.load(tile_ptr_ptr + tile_id + 1)
+
+    rlin = (iy * W + ix)
+    gr = tl.load(grad_r_ptr + rlin, mask=mask, other=0.0)
+    gg = tl.load(grad_g_ptr + rlin, mask=mask, other=0.0)
+    gb = tl.load(grad_b_ptr + rlin, mask=mask, other=0.0)
+    ga = tl.load(grad_a_ptr + rlin, mask=mask, other=0.0)
+
+    # Pass 1: total transmittance per pixel
+    Ttot = tl.where(mask, 1.0, 0.0)
+    j = s
+    while j < e:
+        gi = tl.load(tile_idx_ptr + j)
+        mu_x = tl.load(mu_x_ptr + gi)
+        mu_y = tl.load(mu_y_ptr + gi)
+        cth = tl.load(cos_ptr + gi)
+        sth = tl.load(sin_ptr + gi)
+        isx = tl.load(invsx_ptr + gi)
+        isy = tl.load(invsy_ptr + gi)
+        o   = tl.load(opacity_ptr + gi)
+        dx = gx - mu_x
+        dy = gy - mu_y
+        lx = cth * dx + sth * dy
+        ly = -sth * dx + cth * dy
+        txx = lx * isx
+        tyy = ly * isy
+        expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
+        ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+        Ttot = Ttot * (1.0 - ai)
+        j += 1
+
+    # Pass 2: reverse loop for grads
+    U = tl.where(mask, 1.0, 0.0)
+    Rr = tl.zeros((BLOCK_H, BLOCK_W), dtype=tl.float32)
+    Rg = tl.zeros((BLOCK_H, BLOCK_W), dtype=tl.float32)
+    Rb = tl.zeros((BLOCK_H, BLOCK_W), dtype=tl.float32)
+    j = e - 1
+    while j >= s:
+        gi = tl.load(tile_idx_ptr + j)
+        mu_x = tl.load(mu_x_ptr + gi)
+        mu_y = tl.load(mu_y_ptr + gi)
+        cth = tl.load(cos_ptr + gi)
+        sth = tl.load(sin_ptr + gi)
+        isx = tl.load(invsx_ptr + gi)
+        isy = tl.load(invsy_ptr + gi)
+        o   = tl.load(opacity_ptr + gi)
+        cr = tl.load(col_r_ptr + gi)
+        cg = tl.load(col_g_ptr + gi)
+        cb = tl.load(col_b_ptr + gi)
+
+        dx = gx - mu_x
+        dy = gy - mu_y
+        lx = cth * dx + sth * dy
+        ly = -sth * dx + cth * dy
+        txx = lx * isx
+        tyy = ly * isy
+        expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
+        ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+
+        eps = 1e-6
+        denom = (1.0 - ai) * U
+        denom = tl.where(denom > eps, denom, eps)
+        T_i = Ttot / denom
+
+        inv1ma = tl.where((1.0 - ai) > eps, 1.0 / (1.0 - ai), 1.0 / eps)
+        Sr = T_i * Rr
+        Sg = T_i * Rg
+        Sb = T_i * Rb
+        dcol_term = gr * (T_i * cr - Sr * inv1ma) + gg * (T_i * cg - Sg * inv1ma) + gb * (T_i * cb - Sb * inv1ma)
+        dalpha_term = ga * (T_i * U)
+        dLda = dcol_term + dalpha_term
+
+        # color grads
+        wprefix = T_i * ai
+        val_r = tl.sum(gr * wprefix, where=mask)
+        val_g = tl.sum(gg * wprefix, where=mask)
+        val_b = tl.sum(gb * wprefix, where=mask)
+        tl.atomic_add(dcol_r_ptr + gi, val_r)
+        tl.atomic_add(dcol_g_ptr + gi, val_g)
+        tl.atomic_add(dcol_b_ptr + gi, val_b)
+
+        # opacity grad
+        dopa = tl.sum(dLda * expv, where=mask)
+        tl.atomic_add(dopa_ptr + gi, dopa)
+
+        # geometry
+        dG = dLda * o
+        dlx = dG * (-(isx * txx))
+        dly = dG * (-(isy * tyy))
+        disx = tl.sum(dG * (-(lx * txx)), where=mask)
+        disy = tl.sum(dG * (-(ly * tyy)), where=mask)
+        tl.atomic_add(disx_ptr + gi, disx)
+        tl.atomic_add(disy_ptr + gi, disy)
+        dmx = tl.sum(dlx * (-cth) + dly * (sth), where=mask)
+        dmy = tl.sum(dlx * (-sth) + dly * (-cth), where=mask)
+        dth = tl.sum(dlx * (-sth * dx + cth * dy) + dly * (-cth * dx - sth * dy), where=mask)
+        tl.atomic_add(dmu_x_ptr + gi, dmx)
+        tl.atomic_add(dmu_y_ptr + gi, dmy)
+        tl.atomic_add(dtheta_ptr + gi, dth)
+
+        # update suffix
+        Rr = cr * ai + (1.0 - ai) * Rr
+        Rg = cg * ai + (1.0 - ai) * Rg
+        Rb = cb * ai + (1.0 - ai) * Rb
+        U = (1.0 - ai) * U
+        j -= 1
+
+
+def backward_tiled_full_triton(
+    mu: torch.Tensor,
+    theta: torch.Tensor,
+    sigma_x: torch.Tensor,
+    sigma_y: torch.Tensor,
+    color_rgb: torch.Tensor,
+    opacity: torch.Tensor,
+    tile_ptr: torch.Tensor,
+    tile_idx: torch.Tensor,
+    width: int,
+    height: int,
+    tile_size: int,
+    grad_img: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    assert is_available()
+    D = mu.device
+    dtype = torch.float32
+    mu = mu.contiguous().to(dtype)
+    theta = theta.contiguous().to(dtype)
+    sigma_x = sigma_x.contiguous().to(dtype)
+    sigma_y = sigma_y.contiguous().to(dtype)
+    opacity = opacity.contiguous().to(dtype)
+    g = grad_img.to(device=D, dtype=dtype).contiguous()
+    if g.shape[-1] == 4:
+        gr, gg, gb, ga = g[..., 0], g[..., 1], g[..., 2], g[..., 3]
+    else:
+        gr, gg, gb = g[..., 0], g[..., 1], g[..., 2]
+        ga = torch.zeros_like(gr)
+
+    N = mu.shape[0]
+    dcol = torch.zeros((N, 3), device=D, dtype=dtype)
+    dopa = torch.zeros((N,), device=D, dtype=dtype)
+    dmu_x = torch.zeros((N,), device=D, dtype=dtype)
+    dmu_y = torch.zeros((N,), device=D, dtype=dtype)
+    dtheta = torch.zeros((N,), device=D, dtype=dtype)
+    disx = torch.zeros((N,), device=D, dtype=dtype)
+    disy = torch.zeros((N,), device=D, dtype=dtype)
+
+    cos_th = torch.cos(theta)
+    sin_th = torch.sin(theta)
+    inv_sx = 1.0 / sigma_x
+    inv_sy = 1.0 / sigma_y
+
+    tiles_x = (width + tile_size - 1) // tile_size
+    grid = (int((height + tile_size - 1) // tile_size), int(tiles_x))
+    BLOCK = int(tile_size)
+    _backward_tiled_full_kernel[grid](
+        dcol[:, 0], dcol[:, 1], dcol[:, 2], dopa,
+        dmu_x, dmu_y, dtheta, disx, disy,
+        mu[:, 0], mu[:, 1],
+        cos_th, sin_th,
+        inv_sx, inv_sy,
+        opacity,
+        color_rgb[:, 0], color_rgb[:, 1], color_rgb[:, 2],
+        gr, gg, gb, ga,
+        tile_ptr, tile_idx,
+        width, height, tiles_x, tile_size,
+        BLOCK_H=BLOCK, BLOCK_W=BLOCK,
+    )
+    return dcol, dopa, dmu_x, dmu_y, dtheta, disx, disy
