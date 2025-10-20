@@ -12,6 +12,7 @@ import random
 from pathlib import Path
 
 import pydiffvg
+import numpy as np
 import skimage
 import skimage.io
 import torch
@@ -57,7 +58,41 @@ def main(args):
             ) from e
 
     target_path = Path(args.target)
-    target = torch.from_numpy(skimage.io.imread(str(target_path))).to(torch.float32) / 255.0
+    # Robust image load: prefer imageio or PIL; fallback to skimage, then sanitize dtype
+    img_np: np.ndarray
+    try:
+        import imageio.v3 as iio  # type: ignore
+        img_np = iio.imread(str(target_path))
+    except Exception:
+        try:
+            from PIL import Image  # type: ignore
+
+            with Image.open(str(target_path)) as _im:
+                if _im.mode not in ("RGB", "RGBA"):
+                    # Convert paletted/LA/others to RGB
+                    _im = _im.convert("RGB")
+                img_np = np.array(_im)
+        except Exception:
+            img_np = skimage.io.imread(str(target_path))
+    # Sanitize dtype/channels
+    if img_np.dtype == object:
+        # Some backends can return object arrays for odd encodings; coerce via PIL
+        try:
+            from PIL import Image  # type: ignore
+
+            with Image.open(str(target_path)) as _im:
+                if _im.mode not in ("RGB", "RGBA"):
+                    _im = _im.convert("RGB")
+                img_np = np.array(_im)
+        except Exception:
+            img_np = np.array(img_np, dtype=np.uint8)
+    if img_np.ndim == 2:
+        img_np = np.repeat(img_np[:, :, None], 3, axis=2)
+    if img_np.shape[-1] == 4:
+        img_np = img_np[:, :, :3]
+    if img_np.dtype != np.uint8:
+        img_np = np.clip(img_np, 0, 255).astype(np.uint8, copy=False)
+    target = torch.from_numpy(img_np).to(torch.float32) / 255.0
     target = target.pow(gamma)
     target = target.to(pydiffvg.get_device())
     target = target.unsqueeze(0)

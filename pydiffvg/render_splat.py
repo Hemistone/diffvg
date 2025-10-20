@@ -17,6 +17,7 @@ from .backend import DepthPolicy, SplatConfig, get_backend_config
 from .device import get_device
 from .render_pytorch import OutputType, BaselineRenderFunction as _BaselineRF
 from .serialization import serialize_scene as _serialize_scene
+from . import triton_splat as _triton
 
 
 @dataclass(frozen=True)
@@ -375,6 +376,8 @@ _TRACE_BACKWARD = 0
 _TRACE_FALLBACK = 0
 _TRACE_LIMIT: int | None = None
 
+_GRID_CACHE: Dict[Tuple[int, int, torch.device, torch.dtype], Tuple[torch.Tensor, torch.Tensor]] = {}
+
 
 def _trace_limit() -> int:
     global _TRACE_LIMIT
@@ -405,6 +408,14 @@ def _trace_summary() -> None:
 atexit.register(_trace_summary)
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name, "")
+    if not val:
+        return default
+    v = val.strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _align_grad_devices(
     inputs: Iterable[object], grads: Iterable[Optional[torch.Tensor]]
 ) -> Tuple[Optional[torch.Tensor], ...]:
@@ -420,6 +431,21 @@ def _align_grad_devices(
                 grad = grad.to(device=target_device, dtype=target_dtype)
         aligned.append(grad)
     return tuple(aligned)
+
+def _get_full_grid(height: int, width: int, device: torch.device, dtype: torch.dtype) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Cache full-frame pixel-center grids to avoid reallocation/meshgrid costs."""
+    key = (height, width, device, dtype)
+    cached = _GRID_CACHE.get(key)
+    if cached is not None:
+        return cached
+    yy = torch.arange(height, device=device, dtype=dtype) + 0.5
+    xx = torch.arange(width, device=device, dtype=dtype) + 0.5
+    try:
+        grid_y, grid_x = torch.meshgrid(yy, xx, indexing="ij")
+    except TypeError:
+        grid_y, grid_x = torch.meshgrid(yy, xx)
+    _GRID_CACHE[key] = (grid_y, grid_x)
+    return grid_y, grid_x
 
 
 def _build_segments(points: torch.Tensor, control_counts: List[int]) -> List[SegmentData]:
@@ -807,12 +833,7 @@ def _composite_gaussians_full(
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    yy = torch.arange(height, device=device, dtype=dtype) + 0.5
-    xx = torch.arange(width, device=device, dtype=dtype) + 0.5
-    try:
-        grid_y, grid_x = torch.meshgrid(yy, xx, indexing="ij")
-    except TypeError:
-        grid_y, grid_x = torch.meshgrid(yy, xx)
+    grid_y, grid_x = _get_full_grid(height, width, device, dtype)
 
     image_rgb = torch.zeros(height, width, 3, device=device, dtype=dtype)
     image_alpha = torch.zeros(height, width, device=device, dtype=dtype)
@@ -857,12 +878,7 @@ def _composite_gaussians_full_ckpt(
     function that recomputes its activations in backward rather than storing them.
     """
     chunk = max(int(chunk), 1)
-    yy = torch.arange(height, device=device, dtype=dtype) + 0.5
-    xx = torch.arange(width, device=device, dtype=dtype) + 0.5
-    try:
-        grid_y, grid_x = torch.meshgrid(yy, xx, indexing="ij")
-    except TypeError:
-        grid_y, grid_x = torch.meshgrid(yy, xx)
+    grid_y, grid_x = _get_full_grid(height, width, device, dtype)
 
     image_rgb = torch.zeros(height, width, 3, device=device, dtype=dtype)
     image_alpha = torch.zeros(height, width, device=device, dtype=dtype)
@@ -1005,12 +1021,10 @@ def _composite_gaussians_tiled(
 
         tile_indices = torch.tensor(idx_list, device=device, dtype=torch.long)
 
-        yy = torch.arange(y0, y1, device=device, dtype=dtype) + 0.5
-        xx = torch.arange(x0, x1, device=device, dtype=dtype) + 0.5
-        try:
-            grid_y, grid_x = torch.meshgrid(yy, xx, indexing="ij")
-        except TypeError:
-            grid_y, grid_x = torch.meshgrid(yy, xx)
+        # Slice from cached full-frame grids
+        full_gy, full_gx = _get_full_grid(height, width, device, dtype)
+        grid_y = full_gy[y0:y1, x0:x1]
+        grid_x = full_gx[y0:y1, x0:x1]
 
         tile_rgb = image_rgb[y0:y1, x0:x1]
         tile_alpha = image_alpha[y0:y1, x0:x1]
@@ -1037,6 +1051,139 @@ def _composite_gaussians_tiled(
 
     return torch.cat([image_rgb, image_alpha.unsqueeze(-1)], dim=-1)
 
+def _composite_gaussians_tiled_diff(
+    mu: torch.Tensor,
+    theta: torch.Tensor,
+    sigma_x: torch.Tensor,
+    sigma_y: torch.Tensor,
+    color_rgb: torch.Tensor,
+    opacity: torch.Tensor,
+    width: int,
+    height: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    tile_size: int,
+) -> torch.Tensor:
+    """Autograd-friendly tiled compositor.
+
+    - Builds each tile from scratch (no dependency on a view of the output).
+    - Accumulates with out-of-place operations; writes the final tile to output once.
+    - Keeps front-to-back alpha compositing semantics identical to full-frame path.
+    """
+    tile_size = int(tile_size)
+    if tile_size <= 0:
+        return _composite_gaussians_full(
+            mu, theta, sigma_x, sigma_y, color_rgb, opacity, width, height, device, dtype
+        )
+
+    tiles_x = (width + tile_size - 1) // tile_size
+    tiles_y = (height + tile_size - 1) // tile_size
+    if tiles_x == 0 or tiles_y == 0:
+        return torch.zeros(height, width, 4, device=device, dtype=dtype)
+
+    cos_theta = torch.cos(theta)
+    sin_theta = torch.sin(theta)
+    inv_sigma_x = 1.0 / sigma_x
+    inv_sigma_y = 1.0 / sigma_y
+    opacity_clamped = torch.clamp(opacity, 0.0, 1.0)
+
+    # Compute conservative extents to bin gaussians to tiles.
+    extent_factor = 3.0
+    extent_x = extent_factor * (torch.abs(cos_theta) * sigma_x + torch.abs(sin_theta) * sigma_y)
+    extent_y = extent_factor * (torch.abs(sin_theta) * sigma_x + torch.abs(cos_theta) * sigma_y)
+
+    min_tile_x = torch.floor((mu[:, 0] - extent_x) / tile_size).to(torch.int64).clamp(0, tiles_x - 1)
+    max_tile_x = torch.floor((mu[:, 0] + extent_x) / tile_size).to(torch.int64).clamp(0, tiles_x - 1)
+    min_tile_y = torch.floor((mu[:, 1] - extent_y) / tile_size).to(torch.int64).clamp(0, tiles_y - 1)
+    max_tile_y = torch.floor((mu[:, 1] + extent_y) / tile_size).to(torch.int64).clamp(0, tiles_y - 1)
+
+    tile_bins: List[List[int]] = [[] for _ in range(tiles_x * tiles_y)]
+    num_gaussians = mu.shape[0]
+    for idx in range(num_gaussians):
+        x0 = int(min_tile_x[idx].item())
+        x1 = int(max_tile_x[idx].item())
+        y0 = int(min_tile_y[idx].item())
+        y1 = int(max_tile_y[idx].item())
+        if x0 > x1 or y0 > y1:
+            continue
+        for ty in range(y0, y1 + 1):
+            for tx in range(x0, x1 + 1):
+                tile_bins[ty * tiles_x + tx].append(idx)
+
+    image_rgb = torch.zeros(height, width, 3, device=device, dtype=dtype)
+    image_alpha = torch.zeros(height, width, device=device, dtype=dtype)
+
+    # Gaussian chunk per tile to cap memory: env DIFFVG_SPLAT_TILE_GCHUNK (default 128)
+    gchunk_env = os.environ.get("DIFFVG_SPLAT_TILE_GCHUNK", "128").strip() or "128"
+    try:
+        gchunk = max(1, int(gchunk_env))
+    except Exception:
+        gchunk = 128
+
+    # Process each tile independently, no aliasing with output until final write.
+    for tile_id, idx_list in enumerate(tile_bins):
+        if not idx_list:
+            continue
+        tile_x = tile_id % tiles_x
+        tile_y = tile_id // tiles_x
+        x0 = tile_x * tile_size
+        y0 = tile_y * tile_size
+        x1 = min(width, x0 + tile_size)
+        y1 = min(height, y0 + tile_size)
+        if x0 >= x1 or y0 >= y1:
+            continue
+        tile_indices = torch.tensor(idx_list, device=device, dtype=torch.long)
+
+        yy = torch.arange(y0, y1, device=device, dtype=dtype) + 0.5
+        xx = torch.arange(x0, x1, device=device, dtype=dtype) + 0.5
+        try:
+            grid_y, grid_x = torch.meshgrid(yy, xx, indexing="ij")
+        except TypeError:
+            grid_y, grid_x = torch.meshgrid(yy, xx)
+
+        # Start from empty tile accumulators to avoid in-place ops on views.
+        tile_rgb = torch.zeros((y1 - y0, x1 - x0, 3), device=device, dtype=dtype)
+        tile_alpha = torch.zeros((y1 - y0, x1 - x0), device=device, dtype=dtype)
+
+        # Vectorized front-to-back blending in chunks of gaussians.
+        nbin = tile_indices.numel()
+        for s in range(0, nbin, gchunk):
+            e = min(nbin, s + gchunk)
+            sel = tile_indices[s:e]
+            # Gather parameters
+            mu_c = mu[sel]              # [m,2]
+            ct = cos_theta[sel]         # [m]
+            st = sin_theta[sel]         # [m]
+            isx = inv_sigma_x[sel]      # [m]
+            isy = inv_sigma_y[sel]      # [m]
+            col = color_rgb[sel]        # [m,3]
+            opa = opacity_clamped[sel]  # [m]
+            m = sel.numel()
+            # Broadcast grid
+            dx = grid_x.unsqueeze(0) - mu_c[:, 0].view(m, 1, 1)
+            dy = grid_y.unsqueeze(0) - mu_c[:, 1].view(m, 1, 1)
+            lx = ct.view(m, 1, 1) * dx + st.view(m, 1, 1) * dy
+            ly = -st.view(m, 1, 1) * dx + ct.view(m, 1, 1) * dy
+            exponent = -0.5 * ((lx * isx.view(m, 1, 1)) ** 2 + (ly * isy.view(m, 1, 1)) ** 2)
+            a = torch.exp(exponent) * opa.view(m, 1, 1)  # [m,Ht,Wt]
+            a = torch.clamp(a, 0.0, 1.0)
+            # Transmittance prefix T_i = ∏_{j<i}(1 - a_j)
+            one_minus_a = 1.0 - a
+            P = torch.cumprod(one_minus_a, dim=0)               # [m,Ht,Wt]
+            T = torch.cat([torch.ones(1, *P.shape[1:], device=device, dtype=dtype), P[:-1]], dim=0)
+            # Contribution sum: (1 - A_prev) * sum_i (a_i * T_i) * color_i
+            trans_prev = (1.0 - tile_alpha).unsqueeze(0)         # [1,Ht,Wt]
+            w = (trans_prev * a * T)                             # [m,Ht,Wt]
+            # RGB accumulate
+            tile_rgb = tile_rgb + (w.unsqueeze(-1) * col.view(m, 1, 1, 3)).sum(dim=0)
+            # Alpha combine chunk: A_new = A_prev + (1 - A_prev) * (1 - ∏(1 - a_i))
+            prod_all = P[-1] if m > 0 else torch.ones_like(tile_alpha)
+            tile_alpha = tile_alpha + (1.0 - tile_alpha) * (1.0 - prod_all)
+
+        image_rgb[y0:y1, x0:x1] = tile_rgb
+        image_alpha[y0:y1, x0:x1] = torch.clamp(tile_alpha, 0.0, 1.0)
+
+    return torch.cat([image_rgb, image_alpha.unsqueeze(-1)], dim=-1)
 
 def _render_forward(request: RenderRequest) -> torch.Tensor:
     scene = request.scene
@@ -1100,21 +1247,63 @@ def _render_forward(request: RenderRequest) -> torch.Tensor:
         color_rgb = color_rgb[order]
         opacity = opacity[order]
     tile_size = int(request.config.tile)
-    # Disable tiling during autograd to keep graph intact.
-    if tile_size > 0 and not _scene_requires_grad(scene):
-        return _composite_gaussians_tiled(
-            mu,
-            theta,
-            sigma_x,
-            sigma_y,
-            color_rgb,
-            opacity,
-            request.width,
-            request.height,
-            device,
-            dtype,
-            tile_size,
-        )
+    # Tiling policy:
+    # - No-grad scenes: always use classic tiler when tile_size > 0
+    # - Grad scenes: default to full-frame for speed; enable tiled-diff only if opt-in flag set
+    if tile_size > 0:
+        if not _scene_requires_grad(scene):
+            return _composite_gaussians_tiled(
+                mu,
+                theta,
+                sigma_x,
+                sigma_y,
+                color_rgb,
+                opacity,
+                request.width,
+                request.height,
+                device,
+                dtype,
+                tile_size,
+            )
+        if _env_flag("DIFFVG_SPLAT_TILED", False):
+            return _composite_gaussians_tiled_diff(
+                mu,
+                theta,
+                sigma_x,
+                sigma_y,
+                color_rgb,
+                opacity,
+                request.width,
+                request.height,
+                device,
+                dtype,
+                tile_size,
+            )
+    # Triton path (forward-only) when requested and available.
+    if (
+        _triton.env_wants_triton()
+        and _triton.is_available()
+        and device.type == "cuda"
+    ):
+        try:
+            gchunk = int(os.environ.get("DIFFVG_SPLAT_GCHUNK", "256").strip() or "256")
+        except Exception:
+            gchunk = 256
+        try:
+            if tile_size > 0:
+                return _triton.composite_gaussians_tiled_triton(
+                    mu, theta, sigma_x, sigma_y, color_rgb, opacity,
+                    request.width, request.height, tile_size,
+                )
+            else:
+                return _triton.composite_gaussians_full_triton(
+                    mu, theta, sigma_x, sigma_y, color_rgb, opacity, request.width, request.height,
+                    gchunk=gchunk,
+                )
+        except Exception as exc:
+            _trace(f"triton compositor failed: {type(exc).__name__}")
+            # fall through to torch path
+
     return _composite_gaussians_full(
         mu,
         theta,
