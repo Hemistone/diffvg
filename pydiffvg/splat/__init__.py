@@ -1,6 +1,6 @@
 # Internal helpers for the Bézier splatting backend.
 
-from . import compositor, env, gauss, geometry, trace, types, vjp
+from . import compositor, env, gauss, geometry, trace, types, vjp, debug
 
 __all__ = [
     "compositor",
@@ -10,4 +10,5 @@ __all__ = [
     "trace",
     "types",
     "vjp",
+    "debug",
 ]

@@ -51,6 +51,7 @@ from .splat.vjp import (
     _enable_gradient_args,
     _scene_requires_grad,
 )
+from .splat.debug import backward_tiled_full_python as _backward_tiled_full_python
 
 
 def _parse_paint(args: Iterable[object], start_idx: int) -> Tuple[PaintPayload, int]:
@@ -419,6 +420,9 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                     gchunk=gchunk,
                 )
         except Exception as exc:
+            # If user explicitly requested Triton forward via env, do not silently fallback
+            if _triton.env_wants_triton():
+                raise
             _trace(f"triton compositor failed: {type(exc).__name__}")
             # fall through to torch path
 
@@ -871,27 +875,48 @@ class SplatRenderFunction(torch.autograd.Function):
         # Triton backward (experimental, color-only v0) if state saved and requested
         try:
             saved = getattr(ctx, "splat_saved", None)
-            if saved is not None and _triton.env_wants_triton_backward():
+            if saved is not None and _triton.is_available():
                 mu = saved["mu"]; theta = saved["theta"]; sigma_x = saved["sigma_x"]; sigma_y = saved["sigma_y"]
                 color_rgb = saved["color_rgb"]; opacity = saved["opacity"]
                 tile_ptr = saved["tile_ptr"]; tile_idx = saved["tile_idx"]
                 width = int(saved["width"]); height = int(saved["height"]); tile_size = int(saved["tile_size"])
-                # Triton backward (variant-selected)
-                variant = getattr(_triton, "env_triton_backward_variant", lambda: "tile")()
-                if _debug_enabled():
-                    _trace(f"render_backward using triton variant={variant}")
-                if variant == "pixel":
-                    dcolor, dalpha, dmu_x, dmu_y, dtheta, disx, disy = _triton.backward_tiled_full_triton_pixel(
+                dcolor, dalpha, dmu_x, dmu_y, dtheta, disx, disy = _triton.backward_tiled_full_triton(
+                    mu, theta, sigma_x, sigma_y, color_rgb, opacity,
+                    tile_ptr, tile_idx, width, height, tile_size,
+                    grad_img,
+                )
+                triton_total = (
+                    dcolor.abs().sum()
+                    + dalpha.abs().sum()
+                    + dmu_x.abs().sum()
+                    + dmu_y.abs().sum()
+                    + dtheta.abs().sum()
+                    + disx.abs().sum()
+                    + disy.abs().sum()
+                )
+                # Robust fallback to Python reference if non-finite or near-zero
+                need_fallback = (not torch.isfinite(triton_total)) or float(triton_total.detach().cpu()) < 1e-9
+                strict_bwd = os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower() in ("triton", "triton_tile", "trt", "kernel")
+                if need_fallback:
+                    if strict_bwd:
+                        raise RuntimeError("Triton backward produced non-finite or near-zero grads under strict mode")
+                    if _debug_enabled():
+                        _trace("render_backward detected near-zero or non-finite Triton grads; falling back to python reference")
+                    (
+                        dcolor,
+                        dalpha,
+                        dmu_x,
+                        dmu_y,
+                        dtheta,
+                        disx,
+                        disy,
+                    ) = _backward_tiled_full_python(
                         mu, theta, sigma_x, sigma_y, color_rgb, opacity,
                         tile_ptr, tile_idx, width, height, tile_size,
                         grad_img,
                     )
-                else:
-                    dcolor, dalpha, dmu_x, dmu_y, dtheta, disx, disy = _triton.backward_tiled_full_triton(
-                        mu, theta, sigma_x, sigma_y, color_rgb, opacity,
-                        tile_ptr, tile_idx, width, height, tile_size,
-                        grad_img,
-                    )
+
+                # End Triton backward block
                 # VJP bridge directly on saved autograd-connected tensors (no rebuild)
                 # Convert inv-sigma grads to sigma grads
                 dsx = -disx / (sigma_x.clamp_min(1e-6) ** 2)
@@ -960,8 +985,8 @@ class SplatRenderFunction(torch.autograd.Function):
                         total += float(torch.sum(torch.abs(g)).item())
                 if _debug_enabled():
                     _trace(f"backward-check grad_sum={total:.3e}")
-                if (not math.isfinite(total)) or (total < 1e-8):
-                    raise RuntimeError("near-zero grads from Triton VJP")
+                if not math.isfinite(total):
+                    raise RuntimeError("non-finite grads from Triton VJP")
                 total_args = len(args)
                 grad_list: List[Optional[torch.Tensor]] = [None] * (6 + total_args)
                 for slot, g in zip(grad_slots, vjp_grads):
@@ -971,95 +996,10 @@ class SplatRenderFunction(torch.autograd.Function):
                         grad_list[6 + slot.arg_index] = g.detach()
                 return tuple(grad_list)
         except Exception as exc:
-            # Optional retry via per-pixel variant only if explicitly requested
-            if os.environ.get("DIFFVG_SPLAT_RETRY_PIXEL", "0").strip().lower() in ("1", "true", "on"):
-                try:
-                    if _debug_enabled():
-                        _trace(f"triton backward unavailable ({type(exc).__name__}: {exc}); retrying pixel variant")
-                    saved = getattr(ctx, "splat_saved", None)
-                    if saved is not None and _triton.is_available():
-                        mu = saved["mu"]; theta = saved["theta"]; sigma_x = saved["sigma_x"]; sigma_y = saved["sigma_y"]
-                        color_rgb = saved["color_rgb"]; opacity = saved["opacity"]
-                        tile_ptr = saved["tile_ptr"]; tile_idx = saved["tile_idx"]
-                        width = int(saved["width"]); height = int(saved["height"]); tile_size = int(saved["tile_size"])
-                        dcolor, dalpha, dmu_x, dmu_y, dtheta, disx, disy = _triton.backward_tiled_full_triton_pixel(
-                            mu, theta, sigma_x, sigma_y, color_rgb, opacity,
-                            tile_ptr, tile_idx, width, height, tile_size,
-                            grad_img,
-                        )
-                        dsx = -disx / (sigma_x.clamp_min(1e-6) ** 2)
-                        dsy = -disy / (sigma_y.clamp_min(1e-6) ** 2)
-                        args_with_grad, grad_slots = _enable_gradient_args(args)
-                        with torch.enable_grad():
-                            vjp_req = _prepare_render_request(
-                                request.width,
-                                request.height,
-                                request.num_samples_x,
-                                request.num_samples_y,
-                                request.seed,
-                                request.background_image,
-                                args_with_grad,
-                            )
-                            scene = vjp_req.scene
-                            device = get_device()
-                            dtype = torch.float32
-                            if scene.paths:
-                                sample_dtype = scene.paths[0].points.dtype
-                                if sample_dtype in (torch.float32, torch.float64):
-                                    dtype = sample_dtype
-                            stroke_specs, fill_specs = _gather_specs(scene, device, dtype)
-                            batches: List[GaussianBatch] = []
-                            if stroke_specs:
-                                batches.extend(
-                                    _path_to_gaussians(spec, request.config, device, dtype, request.generator)
-                                    for spec in stroke_specs
-                                )
-                            if fill_specs:
-                                batches.extend(
-                                    _fill_to_gaussians(spec, request.config, device, dtype, request.generator)
-                                    for spec in fill_specs
-                                )
-                            mu_v = torch.cat([b.mu for b in batches], dim=0)
-                            th_v = torch.cat([b.theta for b in batches], dim=0)
-                            sx_v = torch.cat([b.sigma_x for b in batches], dim=0)
-                            sy_v = torch.cat([b.sigma_y for b in batches], dim=0)
-                            col_v = torch.cat([b.color_rgb for b in batches], dim=0)
-                            opa_v = torch.cat([b.opacity for b in batches], dim=0)
-                            order_saved = saved.get("order", None)
-                            if order_saved is not None:
-                                mu_v = mu_v[order_saved]
-                                th_v = th_v[order_saved]
-                                sx_v = sx_v[order_saved]
-                                sy_v = sy_v[order_saved]
-                                col_v = col_v[order_saved]
-                                opa_v = opa_v[order_saved]
-                        vjp_all = [mu_v, th_v, sx_v, sy_v, col_v, opa_v]
-                        g_mu = torch.stack([dmu_x, dmu_y], dim=-1)
-                        gout_all = [g_mu, dtheta, dsx, dsy, dcolor, dalpha]
-                        vjp_tensors = []
-                        grad_outputs = []
-                        for t, g in zip(vjp_all, gout_all):
-                            if isinstance(t, torch.Tensor) and t.requires_grad:
-                                vjp_tensors.append(t)
-                                grad_outputs.append(g)
-                        input_tensors = [slot.tensor for slot in grad_slots]
-                        vjp_grads = torch.autograd.grad(vjp_tensors, input_tensors, grad_outputs=grad_outputs, allow_unused=True)
-                        total = 0.0
-                        for g in vjp_grads:
-                            if isinstance(g, torch.Tensor):
-                                total += float(torch.sum(torch.abs(g)).item())
-                        if _debug_enabled():
-                            _trace(f"backward-check pixel grad_sum={total:.3e}")
-                        if (not math.isfinite(total)) or (total < 1e-8):
-                            raise RuntimeError("near-zero grads from Triton pixel VJP")
-                        total_args = len(args)
-                        grad_list: List[Optional[torch.Tensor]] = [None] * (6 + total_args)
-                        for slot, g in zip(grad_slots, vjp_grads):
-                            grad_list[6 + slot.arg_index] = (torch.zeros_like(slot.tensor) if g is None else g.detach())
-                        return tuple(grad_list)
-                except Exception as exc2:
-                    if _debug_enabled():
-                        _trace(f"triton pixel retry failed ({type(exc2).__name__}: {exc2})")
+            # If user explicitly requested Triton backward via env, do not silently fallback
+            strict_bwd = os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower() in ("triton", "triton_tile", "trt", "kernel")
+            if strict_bwd:
+                raise
             _trace(f"triton backward unavailable: {type(exc).__name__}: {exc}")
         try:
             grads = render_grad(
