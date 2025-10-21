@@ -5,26 +5,14 @@ import os
 from typing import Iterable, List, Optional, Tuple
 from types import SimpleNamespace
 
-import diffvg
 import torch
 
-from .backend import DepthPolicy, SplatConfig, get_backend_config
+from .backend import DepthPolicy
 from .device import get_device
 from .render_pytorch import OutputType, BaselineRenderFunction as _BaselineRF
 from .serialization import serialize_scene as _serialize_scene
 from . import triton_splat as _triton
 from .splat.types import (
-    GaussianBatch,
-    GradSlot,
-    NonPathShapePayload,
-    PaintPayload,
-    PathPayload,
-    PathSpec,
-    RenderRequest,
-    ScenePayload,
-    SegmentData,
-    ShapeGroupPayload,
-    FillSpec,
     _SplatUnsupported,
 )
 from .splat.trace import (
@@ -43,7 +31,6 @@ from .splat.compositor import (
     _composite_gaussians_full_ckpt,
     _composite_gaussians_tiled,
     _composite_gaussians_tiled_diff,
-    _get_full_grid,
 )
 from .splat.vjp import (
     _align_grad_devices,
@@ -52,190 +39,11 @@ from .splat.vjp import (
     _scene_requires_grad,
 )
 from .splat.debug import backward_tiled_full_python as _backward_tiled_full_python
+from .splat.scene import _prepare_render_request
+from .splat.grad import hybrid_backward_tiled_torch as _hybrid_backward_tiled_torch
 
 
-def _parse_paint(args: Iterable[object], start_idx: int) -> Tuple[PaintPayload, int]:
-    idx = start_idx
-    payload_type = args[idx]
-    idx += 1
-    if payload_type is None:
-        return PaintPayload(None, ()), idx
-    if payload_type == diffvg.ColorType.constant:
-        color = args[idx]
-        idx += 1
-        return PaintPayload(payload_type, (color,)), idx
-    if payload_type == diffvg.ColorType.linear_gradient:
-        begin = args[idx]
-        idx += 1
-        end = args[idx]
-        idx += 1
-        offsets = args[idx]
-        idx += 1
-        stop_colors = args[idx]
-        idx += 1
-        return PaintPayload(payload_type, (begin, end, offsets, stop_colors)), idx
-    if payload_type == diffvg.ColorType.radial_gradient:
-        center = args[idx]
-        idx += 1
-        radius = args[idx]
-        idx += 1
-        offsets = args[idx]
-        idx += 1
-        stop_colors = args[idx]
-        idx += 1
-        return PaintPayload(payload_type, (center, radius, offsets, stop_colors)), idx
-    raise ValueError(f"Unsupported paint payload type: {payload_type}")
-
-
-def _deserialize_scene(args: Iterable[object]) -> ScenePayload:
-    idx = 0
-    canvas_width = int(args[idx])
-    idx += 1
-    canvas_height = int(args[idx])
-    idx += 1
-    num_shapes = int(args[idx])
-    idx += 1
-    num_shape_groups = int(args[idx])
-    idx += 1
-    output_type = args[idx]
-    idx += 1
-    use_prefiltering = bool(args[idx])
-    idx += 1
-    eval_positions = args[idx]
-    idx += 1
-
-    paths: List[PathPayload] = []
-    non_path_shapes: List[NonPathShapePayload] = []
-
-    for shape_id in range(num_shapes):
-        shape_type = args[idx]
-        idx += 1
-        if shape_type == diffvg.ShapeType.path:
-            num_control_points = args[idx]
-            idx += 1
-            points = args[idx]
-            idx += 1
-            thickness = args[idx]
-            idx += 1
-            is_closed = bool(args[idx])
-            idx += 1
-            use_distance_approx = bool(args[idx])
-            idx += 1
-            stroke_width = args[idx]
-            idx += 1
-            paths.append(
-                PathPayload(
-                    shape_id=shape_id,
-                    num_control_points=num_control_points,
-                    points=points,
-                    thickness=thickness,
-                    is_closed=is_closed,
-                    use_distance_approx=use_distance_approx,
-                    stroke_width=stroke_width,
-                )
-            )
-            continue
-        if shape_type == diffvg.ShapeType.circle:
-            radius = args[idx]
-            idx += 1
-            center = args[idx]
-            idx += 1
-            shape_tensors = (radius, center)
-        elif shape_type == diffvg.ShapeType.ellipse:
-            radius = args[idx]
-            idx += 1
-            center = args[idx]
-            idx += 1
-            shape_tensors = (radius, center)
-        elif shape_type == diffvg.ShapeType.rect:
-            p_min = args[idx]
-            idx += 1
-            p_max = args[idx]
-            idx += 1
-            shape_tensors = (p_min, p_max)
-        else:
-            raise ValueError(f"Unsupported shape type in splat backend: {shape_type}")
-        stroke_width = args[idx]
-        idx += 1
-        non_path_shapes.append(
-            NonPathShapePayload(
-                shape_id=shape_id,
-                shape_type=shape_type,
-                tensors=shape_tensors,
-                stroke_width=stroke_width,
-            )
-        )
-
-    shape_groups: List[ShapeGroupPayload] = []
-    for _ in range(num_shape_groups):
-        shape_ids = args[idx]
-        idx += 1
-        fill_payload, idx = _parse_paint(args, idx)
-        stroke_payload, idx = _parse_paint(args, idx)
-        use_even_odd_rule = bool(args[idx])
-        idx += 1
-        shape_to_canvas = args[idx]
-        idx += 1
-        shape_groups.append(
-            ShapeGroupPayload(
-                shape_ids=shape_ids,
-                fill=fill_payload,
-                stroke=stroke_payload,
-                use_even_odd_rule=use_even_odd_rule,
-                shape_to_canvas=shape_to_canvas,
-            )
-        )
-
-    filter_type = args[idx]
-    idx += 1
-    filter_radius = args[idx]
-
-    return ScenePayload(
-        canvas_width=canvas_width,
-        canvas_height=canvas_height,
-        output_type=output_type,
-        use_prefiltering=use_prefiltering,
-        eval_positions=eval_positions,
-        paths=paths,
-        non_path_shapes=non_path_shapes,
-        shape_groups=shape_groups,
-        filter_type=filter_type,
-        filter_radius=filter_radius,
-    )
-
-
-def _prepare_render_request(
-    width: int,
-    height: int,
-    num_samples_x: int,
-    num_samples_y: int,
-    seed: int,
-    background_image: Optional[torch.Tensor],
-    args: Iterable[object],
-) -> RenderRequest:
-    config = get_backend_config("splat") or SplatConfig()
-    scene = _deserialize_scene(args)
-    device = get_device()
-    generator: Optional[torch.Generator]
-    if seed is None:
-        generator = None
-    else:
-        if device.type == "cuda":
-            generator = torch.Generator(device=device)
-        else:
-            generator = torch.Generator()
-        generator.manual_seed(int(seed) & 0xFFFFFFFFFFFFFFFF)
-    return RenderRequest(
-        width=width,
-        height=height,
-        num_samples_x=num_samples_x,
-        num_samples_y=num_samples_y,
-        seed=seed,
-        background_image=background_image,
-        config=config,
-        scene=scene,
-        generator=generator,
-    )
+# Scene (de)serialization and request prep moved to pydiffvg/splat/scene.py
 
 
 
@@ -475,165 +283,13 @@ def _render_backward(
     # Optional hybrid tiled backward (Torch) when Triton is selected and tiling is on.
     def _hybrid_enabled() -> bool:
         wants_triton = _triton.env_wants_triton()
-        # default enable when triton requested; can be forced off via env
         default_on = True if wants_triton else False
         return (int(request.config.tile) > 0) and _env_flag("DIFFVG_SPLAT_HYBRID_BWD", default_on)
 
     if _hybrid_enabled():
         try:
-            # Assemble splats (differentiable w.r.t. original tensors)
-            with torch.enable_grad():
-                scene = request.scene
-                device = get_device()
-                dtype = torch.float32
-                if scene.paths:
-                    sample_dtype = scene.paths[0].points.dtype
-                    if sample_dtype in (torch.float32, torch.float64):
-                        dtype = sample_dtype
-                stroke_specs, fill_specs = _gather_specs(scene, device, dtype)
-                batches: List[GaussianBatch] = []
-                if stroke_specs:
-                    batches.extend(
-                        _path_to_gaussians(spec, request.config, device, dtype, request.generator)
-                        for spec in stroke_specs
-                    )
-                if fill_specs:
-                    batches.extend(
-                        _fill_to_gaussians(spec, request.config, device, dtype, request.generator)
-                        for spec in fill_specs
-                    )
-                mu = torch.cat([b.mu for b in batches], dim=0)
-                theta = torch.cat([b.theta for b in batches], dim=0)
-                sigma_x = torch.cat([b.sigma_x for b in batches], dim=0)
-                sigma_y = torch.cat([b.sigma_y for b in batches], dim=0)
-                color_rgb = torch.cat([b.color_rgb for b in batches], dim=0)
-                opacity = torch.cat([b.opacity for b in batches], dim=0)
-                if request.config.depth_policy == DepthPolicy.small_first:
-                    order = torch.argsort(sigma_y)
-                    mu = mu[order]; theta = theta[order]; sigma_x = sigma_x[order]; sigma_y = sigma_y[order]
-                    color_rgb = color_rgb[order]; opacity = opacity[order]
-
-                # Build CSR bins using detached copies (binning doesn't need gradients)
-                tile_size = int(request.config.tile)
-                tile_ptr, tile_idx, tiles_x, tiles_y = _triton._build_tile_csr(
-                    mu.detach(), theta.detach(), sigma_x.detach(), sigma_y.detach(),
-                    request.width, request.height, tile_size,
-                )
-
-                # Per-tile recompute and accumulate scalar loss
-                grad_img_cast = grad_img.to(device=device, dtype=dtype).contiguous()
-                loss = torch.zeros((), device=device, dtype=dtype)
-
-                cos_theta = torch.cos(theta)
-                sin_theta = torch.sin(theta)
-                inv_sigma_x = 1.0 / sigma_x
-                inv_sigma_y = 1.0 / sigma_y
-                opacity_clamped = torch.clamp(opacity, 0.0, 1.0)
-
-                # Gaussian chunk within a tile to control memory
-                gchunk_env = os.environ.get("DIFFVG_SPLAT_TILE_GCHUNK", "128").strip() or "128"
-                try:
-                    gchunk = max(1, int(gchunk_env))
-                except Exception:
-                    gchunk = 128
-
-                # Cached full grid to slice tiles
-                full_gy, full_gx = _get_full_grid(request.height, request.width, device, dtype)
-
-                for ty in range(int(tiles_y)):
-                    for tx in range(int(tiles_x)):
-                        tile_id = ty * int(tiles_x) + tx
-                        s = int(tile_ptr[tile_id].item())
-                        e = int(tile_ptr[tile_id + 1].item())
-                        if s >= e:
-                            continue
-                        x0 = tx * tile_size
-                        y0 = ty * tile_size
-                        x1 = min(request.width, x0 + tile_size)
-                        y1 = min(request.height, y0 + tile_size)
-                        if x0 >= x1 or y0 >= y1:
-                            continue
-                        idx = tile_idx[s:e].to(torch.long)
-
-                        grid_y = full_gy[y0:y1, x0:x1]
-                        grid_x = full_gx[y0:y1, x0:x1]
-
-                        # Local accumulators
-                        tile_rgb = torch.zeros((y1 - y0, x1 - x0, 3), device=device, dtype=dtype)
-                        tile_alpha = torch.zeros((y1 - y0, x1 - x0), device=device, dtype=dtype)
-
-                        nbin = int(idx.numel())
-                        for s2 in range(0, nbin, gchunk):
-                            e2 = min(nbin, s2 + gchunk)
-                            sel = idx[s2:e2]
-                            m = int(sel.numel())
-                            if m == 0:
-                                continue
-                            # Gather parameters
-                            mu_c = mu[sel]              # [m,2]
-                            ct = cos_theta[sel]         # [m]
-                            st = sin_theta[sel]         # [m]
-                            isx = inv_sigma_x[sel]      # [m]
-                            isy = inv_sigma_y[sel]      # [m]
-                            col = color_rgb[sel]        # [m,3]
-                            opa = opacity_clamped[sel]  # [m]
-
-                            dx = grid_x.unsqueeze(0) - mu_c[:, 0].view(m, 1, 1)
-                            dy = grid_y.unsqueeze(0) - mu_c[:, 1].view(m, 1, 1)
-                            lx = ct.view(m, 1, 1) * dx + st.view(m, 1, 1) * dy
-                            ly = -st.view(m, 1, 1) * dx + ct.view(m, 1, 1) * dy
-                            exponent = -0.5 * ((lx * isx.view(m, 1, 1)) ** 2 + (ly * isy.view(m, 1, 1)) ** 2)
-                            a = torch.exp(exponent) * opa.view(m, 1, 1)
-                            a = torch.clamp(a, 0.0, 1.0)
-
-                            one_minus_a = 1.0 - a
-                            P = torch.cumprod(one_minus_a, dim=0)
-                            T = torch.cat([torch.ones(1, *P.shape[1:], device=device, dtype=dtype), P[:-1]], dim=0)
-
-                            trans_prev = (1.0 - tile_alpha).unsqueeze(0)
-                            w = (trans_prev * a * T)  # [m,Ht,Wt]
-                            tile_rgb = tile_rgb + (w.unsqueeze(-1) * col.view(m, 1, 1, 3)).sum(dim=0)
-                            prod_all = P[-1] if m > 0 else torch.ones_like(tile_alpha)
-                            tile_alpha = tile_alpha + (1.0 - tile_alpha) * (1.0 - prod_all)
-
-                        tile_img = torch.cat([tile_rgb, tile_alpha.unsqueeze(-1)], dim=-1)
-                        gtile = grad_img_cast[y0:y1, x0:x1, :tile_img.shape[-1]]
-                        loss = loss + torch.sum(tile_img * gtile)
-
-            # Compute grads of original tensors from scalar loss
-            targets = [slot.tensor for slot in grad_slots]
-            active: List[Tuple[GradSlot, torch.Tensor]] = []
-            for slot, tensor in zip(grad_slots, targets):
-                if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
-                    active.append((slot, tensor))
-            if active:
-                active_slots, active_tensors = zip(*active)
-                grads_active = torch.autograd.grad(loss, active_tensors, retain_graph=False, allow_unused=True)
-                grads_active = tuple(
-                    torch.nan_to_num(g, nan=0.0, posinf=0.0, neginf=0.0) if isinstance(g, torch.Tensor) else g
-                    for g in grads_active
-                )
-            else:
-                active_slots = ()
-                grads_active = ()
-
-            trace_count = _increment_backward()
-            if _should_print(trace_count):
-                _trace(f"render_backward[{trace_count}] autograd_targets={len(targets)}")
-
-            total_args = len(args)
-            grad_list: List[Optional[torch.Tensor]] = [None] * (6 + total_args)
-            active_lookup = {id(slot.tensor): grad for slot, grad in zip(active_slots, grads_active)}
-            for slot, tensor in zip(grad_slots, targets):
-                grad_value = active_lookup.get(id(tensor), None)
-                if grad_value is None:
-                    grad_tensor = torch.zeros_like(slot.tensor)
-                else:
-                    grad_tensor = grad_value
-                grad_list[6 + slot.arg_index] = grad_tensor.detach()
-            return tuple(grad_list)
+            return _hybrid_backward_tiled_torch(request, grad_img, args)
         except Exception as exc:
-            # Fall through to checkpointed full-frame path on any error
             _trace(f"hybrid backward disabled due to: {type(exc).__name__}")
 
     with torch.enable_grad():
@@ -1050,10 +706,4 @@ __all__ = [
     "render_grad",
     "serialize_scene",
     "SplatRenderFunction",
-    "RenderRequest",
-    "ScenePayload",
-    "PathPayload",
-    "NonPathShapePayload",
-    "ShapeGroupPayload",
-    "PaintPayload",
 ]
