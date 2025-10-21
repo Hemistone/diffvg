@@ -119,11 +119,11 @@ Risks & Mitigations
 
 ---
 
-Next Milestone: Full Triton Backward (per‑tile)
+Status: Triton Backward (per‑tile) + Pixel prototype
 
 Scope
 
-- Keep Triton forward (tiled CSR) as today. Replace the hybrid Torch backward with a Triton per‑tile backward that emits grads for Gaussian parameters; use a Torch VJP to map those to path inputs.
+- Keep Triton forward (tiled CSR) as today. Triton per‑tile backward emits grads for Gaussian parameters; Torch VJP maps those to path inputs. A per‑pixel prototype is available behind a flag for A/B.
 
 Implementation steps
 
@@ -132,10 +132,9 @@ Implementation steps
    - Per‑tile CSR: `tile_ptr, tile_idx, tiles_x, tiles_y, tile_size`
    - Depth policy permutation per tile (e.g., small_first by σy)
 
-2) Triton backward kernels (per tile)
-   - Compute per‑pixel prefix `T_pre[i]` and suffix `T_suf[i]` transmittance for stable dL/da_i.
-   - Derive dL/d{μ, θ, σx, σy, α, color} using the same rotated‑Gaussian math as forward.
-   - Accumulate per‑tile into global grad buffers via atomics; ensure 1D linear addressing.
+2) Triton backward kernels
+   - Per‑tile (default): two‑pass prefix/suffix formulation. Derive dL/d{μ, θ, σx, σy, α, color} with rotated‑Gaussian math; accumulate via atomics on linear buffers. S‑chunking supported to bound pressure when tiles have many splats.
+   - Per‑pixel (prototype): one pixel per program iterates its tile’s splats; atomics into global grads. Enable with `DIFFVG_SPLAT_BWD=triton_pixel`.
    - Numeric guards: clamp `1−a`≥1e−6, `σ≥1e−3`, use `nan_to_num` on outputs.
 
 3) Bridge to scene inputs
@@ -143,8 +142,8 @@ Implementation steps
    - Keep Torch path as fallback for debug; add parity asserts in a debug mode.
 
 4) Tuning & knobs
-   - Env: `DIFFVG_SPLAT_BLOCK`, `DIFFVG_SPLAT_WARPS`, `DIFFVG_SPLAT_STAGES`, tile size.
-   - Optional per‑tile S‑chunking to cap register/memory when many splats overlap a tile.
+   - Forward Triton: `DIFFVG_SPLAT_BLOCK`, `DIFFVG_SPLAT_WARPS`, `DIFFVG_SPLAT_STAGES`, `DIFFVG_SPLAT_GCHUNK`; tile size via backend config/env.
+   - Backward Triton: variant select via `DIFFVG_SPLAT_BWD=triton|triton_pixel`; launch via `DIFFVG_SPLAT_BWD_WARPS`, `DIFFVG_SPLAT_BWD_STAGES`, per‑pixel block `DIFFVG_SPLAT_BWD_PIXEL_BLOCK`; reverse S‑chunk via `DIFFVG_SPLAT_BWD_SCHUNK`.
 
 5) Tests
    - Parity: Triton backward vs. hybrid Torch backward (PSNR on loss gradients); FD on small scenes.
