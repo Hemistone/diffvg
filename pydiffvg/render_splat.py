@@ -156,6 +156,27 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
             except Exception as _exc:
                 if _debug_enabled():
                     _trace(f"forward save skipped: {type(_exc).__name__}")
+        # If Triton forward was explicitly requested, try Triton tiled compositor first
+        if _triton.env_wants_triton() and _triton.is_available() and device.type == "cuda":
+            try:
+                return _triton.composite_gaussians_tiled_triton(
+                    mu,
+                    theta,
+                    sigma_x,
+                    sigma_y,
+                    color_rgb,
+                    opacity,
+                    request.width,
+                    request.height,
+                    tile_size,
+                )
+            except Exception as exc:
+                # Strict behavior: if Triton was explicitly requested, do not silently fallback
+                if _triton.env_wants_triton():
+                    raise
+                _trace(f"triton tiled compositor failed: {type(exc).__name__}")
+
+        # Fallback to Torch tiled-diff compositor under grad
         return _composite_gaussians_tiled_diff(
             mu,
             theta,
