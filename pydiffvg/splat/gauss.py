@@ -20,14 +20,11 @@ def _sample_path_geometry(
     device: torch.device,
     dtype: torch.dtype,
     generator: Optional[torch.Generator],
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if not segments:
-        return (
-            torch.empty(0, 2, device=device, dtype=dtype),
-            torch.empty(0, 2, device=device, dtype=dtype),
-            torch.empty(0, device=device, dtype=dtype),
-            torch.empty(0, device=device, dtype=dtype),
-        )
+        z2 = torch.empty(0, 2, device=device, dtype=dtype)
+        z1 = torch.empty(0, device=device, dtype=dtype)
+        return (z2, z2, z1, z1, z1, z1)
 
     lengths = torch.stack([
         _segment_arclength(seg, device=device, dtype=dtype, samples=16) for seg in segments
@@ -46,12 +43,16 @@ def _sample_path_geometry(
     mu_parts.append(pos)
     tan_parts.append(tan)
 
+    seg_ids: List[torch.Tensor] = []
+    tvals_parts: List[torch.Tensor] = []
     for idx, segment in enumerate(segments):
         if idx > 0:
             corner_t = torch.zeros(1, device=device, dtype=dtype)
             pos_corner, tan_corner = _evaluate_segment(segment, corner_t)
             mu_parts.append(pos_corner)
             tan_parts.append(tan_corner)
+            seg_ids.append(torch.full((1,), idx, device=device, dtype=torch.int64))
+            tvals_parts.append(corner_t)
         mid_count = mid_counts[idx] if idx < len(mid_counts) else 0
         if mid_count > 0:
             t_mid = _segment_samples(mid_count, device, dtype, None)
@@ -59,6 +60,8 @@ def _sample_path_geometry(
                 pos_mid, tan_mid = _evaluate_segment(segment, t_mid)
                 mu_parts.append(pos_mid)
                 tan_parts.append(tan_mid)
+                seg_ids.append(torch.full((t_mid.numel(),), idx, device=device, dtype=torch.int64))
+                tvals_parts.append(t_mid)
 
     end_t = torch.ones(1, device=device, dtype=dtype)
     pos_end, tan_end = _evaluate_segment(segments[-1], end_t)
@@ -67,15 +70,14 @@ def _sample_path_geometry(
 
     mu = torch.cat(mu_parts, dim=0)
     tangents = torch.cat(tan_parts, dim=0)
+    seg_idx = torch.cat(seg_ids, dim=0) if seg_ids else torch.empty(0, dtype=torch.int64, device=device)
+    tvals = torch.cat(tvals_parts, dim=0) if tvals_parts else torch.empty(0, dtype=dtype, device=device)
     num_samples = mu.shape[0]
 
     if num_samples == 0:
-        return (
-            torch.empty(0, 2, device=device, dtype=dtype),
-            torch.empty(0, 2, device=device, dtype=dtype),
-            torch.empty(0, device=device, dtype=dtype),
-            torch.empty(0, device=device, dtype=dtype),
-        )
+        z2 = torch.empty(0, 2, device=device, dtype=dtype)
+        z1 = torch.empty(0, device=device, dtype=dtype)
+        return (z2, z2, z1, z1, torch.empty(0, dtype=torch.int64, device=device), torch.empty(0, dtype=dtype, device=device))
 
     if num_samples == 1:
         base_distance = torch.linalg.norm(segments[0].end - segments[0].start)
@@ -96,7 +98,7 @@ def _sample_path_geometry(
         sigma_x = (dist_next + dist_prev) * 0.5
     delta_s = sigma_x.clone()
 
-    return mu, tangents, torch.clamp(sigma_x, min=1e-6), torch.clamp(delta_s, min=1e-8)
+    return mu, tangents, torch.clamp(sigma_x, min=1e-6), torch.clamp(delta_s, min=1e-8), seg_idx, tvals
 
 
 def _path_to_gaussians(
@@ -106,7 +108,7 @@ def _path_to_gaussians(
     dtype: torch.dtype,
     generator: Optional[torch.Generator],
 ) -> GaussianBatch:
-    mu, tangents, sigma_x, delta_s = _sample_path_geometry(
+    mu, tangents, sigma_x, delta_s, seg_idx, tvals = _sample_path_geometry(
         spec.segments, config, device, dtype, generator
     )
     num_samples = mu.shape[0]
@@ -151,6 +153,8 @@ def _path_to_gaussians(
         sigma_y=sigma_y,
         color_rgb=color_rgb,
         opacity=opacity,
+        seg_idx=seg_idx.to(device=device),
+        t=tvals.to(device=device),
     )
 
 

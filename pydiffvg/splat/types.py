@@ -102,6 +102,9 @@ class GaussianBatch:
     sigma_y: torch.Tensor
     color_rgb: torch.Tensor
     opacity: torch.Tensor
+    # Optional sampling metadata for fused VJP
+    seg_idx: Optional[torch.Tensor] = None  # [N] per-sample segment index
+    t: Optional[torch.Tensor] = None        # [N] parametric t within segment
 
 
 @dataclass(frozen=True)
