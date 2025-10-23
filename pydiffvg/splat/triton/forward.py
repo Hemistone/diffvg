@@ -9,6 +9,41 @@ from .runtime import is_available, tl, triton
 
 
 @triton.jit
+def _csr_fill_tiles_kernel(
+    tiles_out_ptr,  # int32 [total]
+    gauss_out_ptr,  # int32 [total]
+    gauss_ptr_ptr,  # int32 [N]
+    min_tx_ptr, max_tx_ptr,  # int32 [N]
+    min_ty_ptr, max_ty_ptr,  # int32 [N]
+    tiles_x: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    i = pid
+    x0 = tl.load(min_tx_ptr + i)
+    x1 = tl.load(max_tx_ptr + i)
+    y0 = tl.load(min_ty_ptr + i)
+    y1 = tl.load(max_ty_ptr + i)
+    # Skip if empty
+    cond_x = x1 >= x0
+    cond_y = y1 >= y0
+    if not (cond_x and cond_y):
+        return
+    base = tl.load(gauss_ptr_ptr + i)
+    pos = 0
+    ty = y0
+    while ty <= y1:
+        base_tile = ty * tiles_x
+        tx = x0
+        while tx <= x1:
+            idx = base + pos
+            tl.store(tiles_out_ptr + idx, base_tile + tx)
+            tl.store(gauss_out_ptr + idx, i)
+            pos += 1
+            tx += 1
+        ty += 1
+
+
+@triton.jit
 def _composite_full_chunk_kernel(
     out_r_ptr, out_g_ptr, out_b_ptr, out_alpha_ptr,
     mu_x_ptr, mu_y_ptr,
@@ -265,13 +300,90 @@ def _build_tile_csr(
     height: int,
     tile: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, int, int]:
-    """Build CSR bins (tile_ptr, tile_idx) on CPU for now (fast enough for N~1e4)."""
+    """Build CSR bins (tile_ptr, tile_idx).
+
+    If Triton/CUDA is available, builds on GPU:
+      1) compute per‑gaussian tile rectangles (vectorized torch ops)
+      2) compute per‑gaussian counts and exclusive prefix gauss_ptr
+      3) Triton kernel fills flat arrays (tile_ids, gauss_ids)
+      4) sort by tile_ids and build tile_ptr via bincount
+    Fallback to the previous CPU method otherwise.
+    """
     device = mu.device
     dtype = mu.dtype
     tile = int(tile)
     tiles_x = (width + tile - 1) // tile
     tiles_y = (height + tile - 1) // tile
-    # extents
+    if tiles_x <= 0 or tiles_y <= 0:
+        return (
+            torch.zeros(1, dtype=torch.int32, device=device),
+            torch.zeros(0, dtype=torch.int32, device=device),
+            tiles_x,
+            tiles_y,
+        )
+
+    use_gpu = is_available() and (device.type == "cuda")
+    if use_gpu:
+        # Vectorized extent computation on device
+        cos_th = torch.cos(theta).to(dtype)
+        sin_th = torch.sin(theta).to(dtype)
+        e = 3.0
+        ext_x = e * (cos_th.abs() * sigma_x + sin_th.abs() * sigma_y)
+        ext_y = e * (sin_th.abs() * sigma_x + cos_th.abs() * sigma_y)
+        min_tx = torch.floor((mu[:, 0] - ext_x) / tile).to(torch.int32).clamp(0, tiles_x - 1)
+        max_tx = torch.floor((mu[:, 0] + ext_x) / tile).to(torch.int32).clamp(0, tiles_x - 1)
+        min_ty = torch.floor((mu[:, 1] - ext_y) / tile).to(torch.int32).clamp(0, tiles_y - 1)
+        max_ty = torch.floor((mu[:, 1] + ext_y) / tile).to(torch.int32).clamp(0, tiles_y - 1)
+
+        # Per‑gaussian counts and exclusive prefix
+        gx = (max_tx - min_tx + 1).clamp(min=0)
+        gy = (max_ty - min_ty + 1).clamp(min=0)
+        gcounts = (gx * gy).to(torch.int32)
+        N = gcounts.shape[0]
+        if N == 0:
+            return (
+                torch.zeros(1, dtype=torch.int32, device=device),
+                torch.zeros(0, dtype=torch.int32, device=device),
+                tiles_x,
+                tiles_y,
+            )
+        # Exclusive prefix sum of per‑gaussian counts
+        csum64 = torch.cumsum(gcounts.to(torch.int64), dim=0)
+        gauss_ptr64 = torch.empty((N + 1,), dtype=torch.int64, device=device)
+        gauss_ptr64[0] = 0
+        gauss_ptr64[1:] = csum64
+        gauss_ptr = gauss_ptr64.to(torch.int32)
+        total = int(gauss_ptr64[-1].item())
+        if total == 0:
+            return (
+                torch.zeros(tiles_x * tiles_y + 1, dtype=torch.int32, device=device),
+                torch.zeros(0, dtype=torch.int32, device=device),
+                tiles_x,
+                tiles_y,
+            )
+        tiles_out = torch.empty((total,), dtype=torch.int32, device=device)
+        gauss_out = torch.empty((total,), dtype=torch.int32, device=device)
+
+        grid = (N,)
+        _csr_fill_tiles_kernel[grid](
+            tiles_out, gauss_out,
+            gauss_ptr,
+            min_tx.contiguous(), max_tx.contiguous(),
+            min_ty.contiguous(), max_ty.contiguous(),
+            tiles_x=tiles_x,
+        )
+        # Sort by tile id and compute tile_ptr via bincount
+        tiles_sorted, perm = torch.sort(tiles_out)
+        tile_idx = gauss_out[perm]
+        # bincount expects int64 on some backends; ensure correct dtype
+        counts = torch.bincount(tiles_sorted.to(torch.int64), minlength=tiles_x * tiles_y)
+        tile_ptr = torch.empty((tiles_x * tiles_y + 1,), dtype=torch.int32, device=device)
+        tile_ptr[0] = 0
+        if counts.numel() > 0:
+            tile_ptr[1:] = torch.cumsum(counts, dim=0).to(torch.int32)
+        return tile_ptr, tile_idx, tiles_x, tiles_y
+
+    # Fallback: CPU implementation (original path)
     cos_th = torch.cos(theta).to(dtype)
     sin_th = torch.sin(theta).to(dtype)
     e = 3.0
