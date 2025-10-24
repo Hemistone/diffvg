@@ -35,7 +35,6 @@ Phases
 - [done] Compute μ, σ_x, σ_y, θ (eq. (7)(8)), Σ (eq. (11)), α (eq. (10))
 - [done] Tiled alpha blending (eq. (9)); Torch implementation (CPU/CUDA) with optional depth sort policy hook
 - [done] Triton forward (optional): full‑frame chunked kernel + CSR‑tiled kernel (fp32). Guarded by `DIFFVG_SPLAT_IMPL=triton`; Torch remains the default and reference implementation.
-- [todo] Unit test “forward sanity” image vs. baseline on simple scenes
 
 1b) Quality Hardening (Open Strokes)
 

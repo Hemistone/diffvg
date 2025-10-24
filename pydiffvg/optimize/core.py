@@ -184,7 +184,7 @@ class OptimizableSvg(SvgParserMixin, SvgWriterMixin):
                     return (OptimizableSvg.TransformTools.tf_to_string(self.residual) if self.residual is not None else "")+" "+str
                 elif self.transform_mode == "affine":
                     str = OptimizableSvg.TransformTools.decomp_to_string((self.Theta, self.scale, self.shear, self.translation))
-                    return composed
+                    return str
 
         def zero_grad(self):
             if self.optimizes:

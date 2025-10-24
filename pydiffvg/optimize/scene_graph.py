@@ -80,8 +80,13 @@ class SvgNode:
             elif key == "fill-opacity" or key == "stroke-opacity" or key == "opacity":
                 if optim_params["optimize_alpha"]:
                     value[1].requires_grad_(True)
-                    self.optimizers.append(_COLOR_OPTIMIZER(value[1], optim_params["optimizer"],
-                                                                         optim_params["alpha_lr"]))
+                    self.optimizers.append(
+                        _COLOR_OPTIMIZER(
+                            value[1],
+                            SvgOptimizationSettings.optims[optim_params["optimizer"]],
+                            optim_params["alpha_lr"],
+                        )
+                    )
             elif key == "fill-rule" or key == "stroke-width":
                 pass
             else:
