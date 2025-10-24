@@ -14,7 +14,8 @@ Preintegration Prep (Serialization & Cache)
 - [done] Extend `pydiffvg.serialize_scene` with an opt-in path that preserves tensors on `pydiffvg.get_device()`; keep baseline renderer on CPU while splat backend consumes the flag. (Profiling pending.)
 - [done] Thread a `keep_on_device`/`device` hint through backend selection so splat can request device-resident tensors without touching public APIs.
 - [todo] Audit shape/gradient handling once splat forward/backward exist to confirm autograd stability with GPU-resident tensors.
-- [todo] Record profiling numbers (CPU vs CUDA) before/after enabling `keep_on_device` in the splat path to quantify the bandwidth win.
+- [rejected] Introduce a per-iteration Renderer cache for tile bins / splat buffers keyed by canvas+shape signature. Rationale: host-side cache invalidation/sync cost and scene churn offset any benefit in practice; GPU CSR binning dominates and makes this ineffective.
+- [rejected] Reuse allocations across iterations via cache toggles. Rationale: allocator reuse provided no measurable speedup on painterly workloads; added complexity and DX surface area without payoff.
 
 Phases
 
@@ -116,3 +117,9 @@ Acceleration Roadmap
 - [todo] CUDA Graph capture / `torch.compile` once kernel set is stable (no autograd VJP), to cut Python overhead per iteration.
 - [todo] Policy for no‑grad + tiling → Triton tiled forward by default when requested (raster‑only workloads).
 - [planned] Optional forward‑side caching of Bézier weights (wpos/wtan) in fp16 if profiling shows benefit in combination with fused kernel; keep disabled otherwise.
+
+Closed / Not Recommended
+
+- [closed] Host-side per-sample index caching in ctx (si0/si_end/ci0/ci1/deg): negligible or negative end-to-end impact; adds invalidation logic and sync points. Removed.
+- [closed] Per-iteration CSR/tile-bin caches on CPU: GPU-side CSR binning and on-device reductions dominate; host caches increased overhead. Removed.
+- [note] Forward-side weight caching (wpos/wtan) remains gated under “planned” and should be considered only alongside a fused Triton kernel that consumes the weights directly.
