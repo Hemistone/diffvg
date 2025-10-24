@@ -285,9 +285,11 @@ def main(args):
                 None,
                 *scene_args,
             )
-            # Compose to RGB (over white) and save
+            # Compose to RGB (over white) and save if requested
             img_rgb = _rgba_over_white(img)
-            pydiffvg.imwrite(img_rgb.cpu(), str(run.iter_path(t)), gamma=gamma)
+            save_every = getattr(args, "save_every", 1)
+            if save_every and save_every > 0 and (t % save_every == 0):
+                pydiffvg.imwrite(img_rgb.cpu(), str(run.iter_path(t)), gamma=gamma)
             img = img_rgb
             img = img.unsqueeze(0)
             img = img.permute(0, 3, 1, 2)
@@ -309,8 +311,8 @@ def main(args):
                 for group in shape_groups:
                     group.stroke_color.data.clamp_(0.0, 1.0)
 
-            save_every = getattr(args, "save_svg_every", 0)
-            if (save_every and save_every > 0 and (t % save_every == 0)) or (t == args.num_iter - 1 and save_every and save_every > 0):
+            svg_every = getattr(args, "save_svg_every", 0)
+            if (svg_every and svg_every > 0 and (t % svg_every == 0)) or (t == args.num_iter - 1 and svg_every and svg_every > 0):
                 pydiffvg.save_svg(
                     str(run.iter_dir / f"iter_{t:04d}.svg"),
                     canvas_width,
@@ -364,6 +366,12 @@ if __name__ == "__main__":
     parser.add_argument("--loss", type=str, default="mse", help="Loss: mse|l1|lpips|msssim|dists|perceptual-balanced")
     parser.add_argument("--num_iter", type=int, default=500)
     parser.add_argument("--save_svg_every", type=int, default=0, help="Save SVG every N iters (0 disables)")
+    parser.add_argument(
+        "--save_every",
+        type=int,
+        default=1,
+        help="Save PNG every N iters (1 saves every iter, 0 disables)",
+    )
     parser.add_argument("--use_blob", dest='use_blob', action='store_true')
     args = parser.parse_args()
     main(args)
