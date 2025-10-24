@@ -44,35 +44,40 @@ def main(args):
     use_gpu = torch.cuda.is_available()
     pydiffvg.set_use_gpu(use_gpu)
 
-    # Initialize LPIPS loss (prefer PIQ if requested and available)
-    perception_loss = None
-    if args.use_lpips_loss:
-        device = pydiffvg.get_device()
+    # Build loss function
+    device = pydiffvg.get_device()
+    loss_name = getattr(args, "loss", "mse").strip().lower()
+    if loss_name == "mse":
+        def _loss_fn(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+            return (pred - tgt).pow(2).mean()
+    elif loss_name == "l1":
+        def _loss_fn(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+            return (pred - tgt).abs().mean()
+    elif loss_name in ("lpips", "msssim", "dists", "perceptual-balanced"):
         try:
             import piq  # type: ignore
-
-            class _LPIPSAdapter(torch.nn.Module):
-                """Wrap PIQ's LPIPS to accept inputs in [0, 1].
-
-                PIQ's LPIPS expects inputs normalized to [-1, 1]. This adapter
-                keeps the rest of the pipeline unchanged by converting ranges.
-                """
-
-                def __init__(self):
-                    super().__init__()
-                    # Use default backbone (VGG) and mean reduction
-                    self.loss = piq.LPIPS(reduction="mean")
-
-                def forward(self, x, y):
-                    x_n = x * 2.0 - 1.0
-                    y_n = y * 2.0 - 1.0
-                    return self.loss(x_n, y_n)
-
-            perception_loss = _LPIPSAdapter().to(device)
         except Exception as e:
-            raise RuntimeError(
-                "--use_lpips_loss requested but 'piq' is not available. Install with 'pip install piq'."
-            ) from e
+            raise RuntimeError(f"loss '{loss_name}' requested but 'piq' is not available. Install with 'pip install piq'.") from e
+        if loss_name == "lpips":
+            lpips = piq.LPIPS(reduction="mean").to(device)
+            def _loss_fn(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+                return lpips(pred * 2.0 - 1.0, tgt * 2.0 - 1.0)
+        elif loss_name == "msssim":
+            msssim = piq.MultiScaleSSIMLoss(data_range=1.0).to(device)
+            def _loss_fn(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+                return msssim(pred, tgt)
+        elif loss_name == "dists":
+            dists = piq.DISTS(reduction="mean").to(device)
+            def _loss_fn(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+                return dists(pred * 2.0 - 1.0, tgt * 2.0 - 1.0)
+        else:  # perceptual-balanced preset
+            lpips = piq.LPIPS(reduction="mean").to(device)
+            def _loss_fn(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+                l_perc = lpips(pred * 2.0 - 1.0, tgt * 2.0 - 1.0)
+                l_mse = (pred - tgt).pow(2).mean()
+                return l_perc + 0.02 * l_mse
+    else:
+        raise ValueError(f"Unsupported --loss '{loss_name}'. Choose from: mse, l1, lpips, msssim, dists, perceptual-balanced")
 
     target_path = Path(args.target)
     # Robust image load: prefer imageio or PIL; fallback to skimage, then sanitize dtype
@@ -143,7 +148,7 @@ def main(args):
             "paths": num_paths,
             "iterations": args.num_iter,
             "max_width": max_width,
-            "lpips": args.use_lpips_loss,
+            "loss": loss_name,
             "blob_mode": args.use_blob,
             "run_dir": run.results_dir,
         },
@@ -286,10 +291,7 @@ def main(args):
             img = img_rgb
             img = img.unsqueeze(0)
             img = img.permute(0, 3, 1, 2)
-            if args.use_lpips_loss:
-                loss = perception_loss(img, target) + (img.mean() - target.mean()).pow(2)
-            else:
-                loss = (img - target).pow(2).mean()
+            loss = _loss_fn(img, target)
 
             loss.backward()
 
@@ -359,7 +361,7 @@ if __name__ == "__main__":
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num_paths", type=int, default=512)
     parser.add_argument("--max_width", type=float, default=2.0)
-    parser.add_argument("--use_lpips_loss", dest='use_lpips_loss', action='store_true')
+    parser.add_argument("--loss", type=str, default="mse", help="Loss: mse|l1|lpips|msssim|dists|perceptual-balanced")
     parser.add_argument("--num_iter", type=int, default=500)
     parser.add_argument("--save_svg_every", type=int, default=0, help="Save SVG every N iters (0 disables)")
     parser.add_argument("--use_blob", dest='use_blob', action='store_true')
