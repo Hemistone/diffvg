@@ -44,7 +44,6 @@ from .splat.vjp import (
 )
 from .splat.debug import backward_tiled_full_python as _backward_tiled_full_python
 from .splat.scene import _prepare_render_request
-from .splat.grad import hybrid_backward_tiled_torch as _hybrid_backward_tiled_torch
 
 
 # Scene (de)serialization and request prep moved to pydiffvg/splat/scene.py
@@ -212,8 +211,8 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
             except Exception as _exc:
                 if _debug_enabled():
                     _trace(f"forward save skipped: {type(_exc).__name__}")
-        # If Triton forward was explicitly requested, try Triton tiled compositor first
-        if _triton.env_wants_triton() and _triton.is_available() and device.type == "cuda":
+        # Prefer Triton tiled compositor when available (strict only if explicitly requested)
+        if _triton.is_available() and device.type == "cuda":
             try:
                 return _triton.composite_gaussians_tiled_triton(
                     mu,
@@ -227,7 +226,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                     tile_size,
                 )
             except Exception as exc:
-                # Strict behavior: if Triton was explicitly requested, do not silently fallback
+                # Only treat as fatal if explicitly requested via env
                 if _triton.env_wants_triton():
                     raise
                 _trace(f"triton tiled compositor failed: {type(exc).__name__}")
@@ -246,12 +245,8 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
             dtype,
             tile_size,
         )
-    # Triton path (forward-only) when requested and available.
-    if (
-        _triton.env_wants_triton()
-        and _triton.is_available()
-        and device.type == "cuda"
-    ):
+    # Prefer Triton full-frame compositor when available (strict only if explicitly requested)
+    if _triton.is_available() and device.type == "cuda":
         try:
             gchunk = int(os.environ.get("DIFFVG_SPLAT_GCHUNK", "256").strip() or "256")
         except Exception:
@@ -287,37 +282,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                     for spec in fill_specs:
                         color_rgba_refs.append(fill_color_ref.get(spec.shape_id))
                         stroke_width_refs.append(None)
-                    cache_on = os.environ.get("DIFFVG_SPLAT_VJP_CACHE", "1").strip().lower() not in ("0", "false", "no", "off")
-                    if cache_on:
-                        si0ps_list: List[Optional[torch.Tensor]] = []
-                        si_endps_list: List[Optional[torch.Tensor]] = []
-                        ci0ps_list: List[Optional[torch.Tensor]] = []
-                        ci1ps_list: List[Optional[torch.Tensor]] = []
-                        degps_list: List[Optional[torch.Tensor]] = []
-                        for si, cnt in enumerate(spec_counts):
-                            cnt = int(cnt)
-                            if cnt <= 0:
-                                si0ps_list.append(None); si_endps_list.append(None)
-                                ci0ps_list.append(None); ci1ps_list.append(None)
-                                degps_list.append(None)
-                                continue
-                            seg_idx = seg_meta[si]
-                            tvals = t_meta[si]
-                            cc = cc_meta[si]
-                            if not (isinstance(seg_idx, torch.Tensor) and isinstance(tvals, torch.Tensor) and isinstance(cc, list)):
-                                si0ps_list.append(None); si_endps_list.append(None)
-                                ci0ps_list.append(None); ci1ps_list.append(None)
-                                degps_list.append(None)
-                                continue
-                            D = seg_idx.device
-                            cc_t = torch.tensor(cc, device=D, dtype=torch.int64)
-                            S = cc_t.numel()
-                            if S == 0:
-                                si0ps_list.append(None); si_endps_list.append(None)
-                                ci0ps_list.append(None); ci1ps_list.append(None)
-                                degps_list.append(None)
-                                continue
-                            pass
+                    # no-op: per-sample index caching removed (negligible benefit)
                     setattr(ctx, "splat_saved", {
                         "mu": mu,
                         "theta": theta,
@@ -352,11 +317,9 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                     gchunk=gchunk,
                 )
         except Exception as exc:
-            # If user explicitly requested Triton forward via env, do not silently fallback
             if _triton.env_wants_triton():
                 raise
             _trace(f"triton compositor failed: {type(exc).__name__}")
-            # fall through to torch path
 
     return _composite_gaussians_full(
         mu,
@@ -404,17 +367,7 @@ def _render_backward(
         args_with_grad,
     )
 
-    # Optional hybrid tiled backward (Torch) when Triton is selected and tiling is on.
-    def _hybrid_enabled() -> bool:
-        wants_triton = _triton.env_wants_triton()
-        default_on = True if wants_triton else False
-        return (int(request.config.tile) > 0) and _env_flag("DIFFVG_SPLAT_HYBRID_BWD", default_on)
-
-    if _hybrid_enabled():
-        try:
-            return _hybrid_backward_tiled_torch(request, grad_img, args)
-        except Exception as exc:
-            _trace(f"hybrid backward disabled due to: {type(exc).__name__}")
+    # Remove legacy hybrid Torch backward path; rely on Triton or checkpointed path below
 
     with torch.enable_grad():
         # Use checkpointed compositor to avoid retaining per-Gaussian activations.
@@ -676,7 +629,7 @@ class SplatRenderFunction(torch.autograd.Function):
                 )
                 # Robust fallback to Python reference if non-finite or near-zero
                 need_fallback = (not torch.isfinite(triton_total)) or float(triton_total.detach().cpu()) < 1e-9
-                strict_bwd = os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower() in ("triton", "triton_tile", "trt", "kernel")
+                strict_bwd = os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower() == "triton"
                 if need_fallback:
                     if strict_bwd:
                         raise RuntimeError("Triton backward produced non-finite or near-zero grads under strict mode")
@@ -703,13 +656,6 @@ class SplatRenderFunction(torch.autograd.Function):
                 # Prepare grad slots and fused mappings for color/opacity/width
                 args_with_grad, grad_slots = _enable_gradient_args(args)
                 fused_map: dict[int, torch.Tensor] = {}
-                # Geometry fused VJP mode (0: off → use autograd for points,
-                # 1: tangent-based theta, 2: central-diff theta with fallback to tangent)
-                try:
-                    _geom_mode_env = os.environ.get("DIFFVG_SPLAT_VJP_GEOM", "")
-                    GEOM_MODE = int(_geom_mode_env) if _geom_mode_env.strip() != "" else 2
-                except Exception:
-                    GEOM_MODE = 2
                 try:
                     spec_counts = saved.get("spec_counts", None)
                     color_rgba_refs = saved.get("color_rgba_refs", None)
@@ -771,10 +717,9 @@ class SplatRenderFunction(torch.autograd.Function):
                                     if isinstance(wref, torch.Tensor):
                                         gw = dsy_g[idx0:idx1].sum() * width_scale
                                         fused_map[id(wref)] = gw.expand_as(wref)
-                                # geometry fused VJP to points (optional via env toggle)
+                                # geometry fused VJP to points
                                 if (
-                                    GEOM_MODE != 0
-                                    and isinstance(points_refs, list)
+                                    isinstance(points_refs, list)
                                     and isinstance(control_counts_list, list)
                                     and isinstance(seg_idx_list, list)
                                     and isinstance(t_list, list)
@@ -873,7 +818,7 @@ class SplatRenderFunction(torch.autograd.Function):
                                             j_idx = torch.arange(cnt_i, device=D)
                                             mids = (j_idx >= 1) & (j_idx <= (cnt_i - 2))
                                             use_central = torch.zeros((cnt_i,), dtype=torch.bool, device=D)
-                                            if GEOM_MODE == 2 and cnt_i >= 3:
+                                            if cnt_i >= 3:
                                                 # central-diff vector c = mu[j+1] - mu[j-1]
                                                 c = mu_spec[2:] - mu_spec[:-2]
                                                 cn2 = (c[:, 0] * c[:, 0] + c[:, 1] * c[:, 1])
@@ -996,30 +941,9 @@ class SplatRenderFunction(torch.autograd.Function):
                         sx_v = sx_v[order_saved]
                         sy_v = sy_v[order_saved]
                         # col_v/opa_v ordering not needed for fused mapping
-                # If fused map covers all active slots, optionally compare with autograd VJP then skip it
+                # If fused map covers all active slots, skip autograd VJP entirely
                 input_tensors = [slot.tensor for slot in grad_slots]
-                compare_vjp = bool(int(os.environ.get("DIFFVG_SPLAT_VJP_COMPARE", "0") or "0"))
                 if all(id(t) in fused_map for t in input_tensors):
-                    if compare_vjp:
-                        # Build geometry-only VJP to compare
-                        vjp_all = [mu_v, th_v, sx_v, sy_v]
-                        g_mu = torch.stack([dmu_x, dmu_y], dim=-1)
-                        gout_all = [g_mu, dtheta, dsx, dsy]
-                        vjp_tensors = []
-                        grad_outputs = []
-                        for t, g in zip(vjp_all, gout_all):
-                            if isinstance(t, torch.Tensor) and t.requires_grad:
-                                vjp_tensors.append(t)
-                                grad_outputs.append(g)
-                        vjp_grads = torch.autograd.grad(vjp_tensors, input_tensors, grad_outputs=grad_outputs, allow_unused=True)
-                        # Compare per-input
-                        for slot, g_auto in zip(grad_slots, vjp_grads):
-                            g_fused = fused_map.get(id(slot.tensor))
-                            if isinstance(g_auto, torch.Tensor) and isinstance(g_fused, torch.Tensor):
-                                diff = (g_auto - g_fused).detach()
-                                l2 = float(torch.linalg.norm(diff).item())
-                                linf = float(torch.max(torch.abs(diff)).item())
-                                _trace(f"vjp-compare arg#{slot.arg_index} | l2={l2:.3e} linf={linf:.3e}")
                     total_args = len(args)
                     grad_list: List[Optional[torch.Tensor]] = [None] * (6 + total_args)
                     for slot in grad_slots:
@@ -1049,7 +973,7 @@ class SplatRenderFunction(torch.autograd.Function):
                 return tuple(grad_list)
         except Exception as exc:
             # If user explicitly requested Triton backward via env, do not silently fallback
-            strict_bwd = os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower() in ("triton", "triton_tile", "trt", "kernel")
+            strict_bwd = os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower() == "triton"
             if strict_bwd:
                 raise
             _trace(f"triton backward unavailable: {type(exc).__name__}: {exc}")

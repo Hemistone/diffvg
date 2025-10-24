@@ -209,7 +209,7 @@ def composite_gaussians_full_triton(
 
 
 def env_wants_triton() -> bool:
-    return (os.environ.get("DIFFVG_SPLAT_IMPL", "").strip().lower() in ("triton", "trt", "kernel"))
+    return (os.environ.get("DIFFVG_SPLAT_IMPL", "").strip().lower() == "triton")
 
 
 @triton.jit

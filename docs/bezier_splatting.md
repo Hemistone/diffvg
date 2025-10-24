@@ -131,6 +131,27 @@ Notes:
 - Numerical stability: clamp σ to [σ_min, σ_max]; epsilon in Σ^{-1}; cap α to [0, 1].
 - Determinism: seed sampling via SceneOptions.seed.
 
+## Backward Implementation Notes
+
+These notes consolidate practical design choices for backward passes in the splat backend.
+
+- Saved state (ctx)
+  - SoA params on device (fp32): `mu_x, mu_y, cosθ, sinθ, invσx, invσy, α, color`.
+  - Per‑tile CSR for tiled compositing: `tile_ptr, tile_idx, tiles_x, tiles_y, tile_size`.
+  - Any depth policy permutation used for consistent ordering under gradients.
+
+- Kernels (tiled)
+  - Two‑pass prefix/suffix per tile; accumulate dL/d{μ, θ, σx, σy, α, color} with rotated‑Gaussian math via atomics.
+  - Transmittance in log‑domain to avoid underflow for long products.
+  - Numeric guards: clamp `(1 − α)` ≥ 1e−6; `σ` ≥ 1e−3; `nan_to_num` on outputs.
+
+- VJP mapping to scene inputs
+  - When not fully fused, build a small autograd view and call `torch.autograd.grad([mu,θ,σx,σy,α,color], inputs, grad_outputs=[dμ,…,dα,dcolor])`.
+  - When fully fused, skip autograd VJP and map directly to original scene tensors.
+  - Geometry parity: include endpoint samples in `seg_idx/t`; central‑diff θ with tangent fallback (threshold 1e−8); σx chain‑rule uses 1/ρ with clamp mask and boundary spacing weights; vectorized scatter via `index_add`.
+
+- Instrumentation: enable `DIFFVG_SPLAT_TRACE` to print forward/backward summaries and parity diffs when needed.
+
 ## References to Equations
 
 - (1)(2): Bézier + Bernstein
