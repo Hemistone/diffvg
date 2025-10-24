@@ -232,8 +232,9 @@ def main(args):
         None,
         *scene_args,
     )
-    # Save raw RGBA for faithful visualization (viewer composites alpha)
-    pydiffvg.imwrite(img.cpu(), str(run.results_dir / "init.png"), gamma=gamma)
+    # Save initial frame composited over white for visualization
+    init_rgb = _rgba_over_white(img)
+    pydiffvg.imwrite(init_rgb.cpu(), str(run.results_dir / "init.png"), gamma=gamma)
 
     points_vars = []
     stroke_width_vars = []
@@ -279,10 +280,9 @@ def main(args):
                 None,
                 *scene_args,
             )
-            # Save raw RGBA for visualization
-            pydiffvg.imwrite(img.cpu(), str(run.iter_path(t)), gamma=gamma)
-            # Compose to RGB (over white) for loss only
+            # Compose to RGB (over white) and save
             img_rgb = _rgba_over_white(img)
+            pydiffvg.imwrite(img_rgb.cpu(), str(run.iter_path(t)), gamma=gamma)
             img = img_rgb
             img = img.unsqueeze(0)
             img = img.permute(0, 3, 1, 2)
@@ -307,13 +307,16 @@ def main(args):
                 for group in shape_groups:
                     group.stroke_color.data.clamp_(0.0, 1.0)
 
-            if t % 10 == 0 or t == args.num_iter - 1:
+            save_every = getattr(args, "save_svg_every", 0)
+            if (save_every and save_every > 0 and (t % save_every == 0)) or (t == args.num_iter - 1 and save_every and save_every > 0):
                 pydiffvg.save_svg(
                     str(run.iter_dir / f"iter_{t:04d}.svg"),
                     canvas_width,
                     canvas_height,
                     shapes,
                     shape_groups,
+                    use_gamma=False,
+                    background_rgb=(1.0, 1.0, 1.0),
                 )
 
             progress.log(t, loss=loss.item())
@@ -327,15 +330,27 @@ def main(args):
         canvas_width, canvas_height, shapes, shape_groups
     )
     img = render(
-        target.shape[1],
-        target.shape[0],
+        canvas_width,
+        canvas_height,
         2,
         2,
         0,
         None,
         *scene_args,
     )
-    pydiffvg.imwrite(img.cpu(), str(run.results_dir / "final.png"), gamma=gamma)
+    final_rgb = _rgba_over_white(img)
+    pydiffvg.imwrite(final_rgb.cpu(), str(run.results_dir / "final.png"), gamma=gamma)
+    # Also emit final SVG with white background if requested
+    if getattr(args, "save_svg_every", 0) and getattr(args, "save_svg_every", 0) > 0:
+        pydiffvg.save_svg(
+            str(run.results_dir / "final.svg"),
+            canvas_width,
+            canvas_height,
+            shapes,
+            shape_groups,
+            use_gamma=False,
+            background_rgb=(1.0, 1.0, 1.0),
+        )
 
     run.make_video()
 
@@ -346,6 +361,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_width", type=float, default=2.0)
     parser.add_argument("--use_lpips_loss", dest='use_lpips_loss', action='store_true')
     parser.add_argument("--num_iter", type=int, default=500)
+    parser.add_argument("--save_svg_every", type=int, default=0, help="Save SVG every N iters (0 disables)")
     parser.add_argument("--use_blob", dest='use_blob', action='store_true')
     args = parser.parse_args()
     main(args)

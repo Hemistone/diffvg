@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple, TYPE_CHECKING
 from types import SimpleNamespace
 
 import torch
@@ -15,6 +15,10 @@ from . import triton_splat as _triton
 from .splat.types import (
     _SplatUnsupported,
 )
+
+# Static type-checking only (avoid runtime imports/cycles)
+if TYPE_CHECKING:  # pragma: no cover - typing aid
+    from .splat.types import RenderRequest, GaussianBatch, GradSlot
 from .splat.trace import (
     debug_enabled as _debug_enabled,
     increment_backward as _increment_backward,
@@ -283,6 +287,37 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                     for spec in fill_specs:
                         color_rgba_refs.append(fill_color_ref.get(spec.shape_id))
                         stroke_width_refs.append(None)
+                    cache_on = os.environ.get("DIFFVG_SPLAT_VJP_CACHE", "1").strip().lower() not in ("0", "false", "no", "off")
+                    if cache_on:
+                        si0ps_list: List[Optional[torch.Tensor]] = []
+                        si_endps_list: List[Optional[torch.Tensor]] = []
+                        ci0ps_list: List[Optional[torch.Tensor]] = []
+                        ci1ps_list: List[Optional[torch.Tensor]] = []
+                        degps_list: List[Optional[torch.Tensor]] = []
+                        for si, cnt in enumerate(spec_counts):
+                            cnt = int(cnt)
+                            if cnt <= 0:
+                                si0ps_list.append(None); si_endps_list.append(None)
+                                ci0ps_list.append(None); ci1ps_list.append(None)
+                                degps_list.append(None)
+                                continue
+                            seg_idx = seg_meta[si]
+                            tvals = t_meta[si]
+                            cc = cc_meta[si]
+                            if not (isinstance(seg_idx, torch.Tensor) and isinstance(tvals, torch.Tensor) and isinstance(cc, list)):
+                                si0ps_list.append(None); si_endps_list.append(None)
+                                ci0ps_list.append(None); ci1ps_list.append(None)
+                                degps_list.append(None)
+                                continue
+                            D = seg_idx.device
+                            cc_t = torch.tensor(cc, device=D, dtype=torch.int64)
+                            S = cc_t.numel()
+                            if S == 0:
+                                si0ps_list.append(None); si_endps_list.append(None)
+                                ci0ps_list.append(None); ci1ps_list.append(None)
+                                degps_list.append(None)
+                                continue
+                            pass
                     setattr(ctx, "splat_saved", {
                         "mu": mu,
                         "theta": theta,
@@ -668,6 +703,13 @@ class SplatRenderFunction(torch.autograd.Function):
                 # Prepare grad slots and fused mappings for color/opacity/width
                 args_with_grad, grad_slots = _enable_gradient_args(args)
                 fused_map: dict[int, torch.Tensor] = {}
+                # Geometry fused VJP mode (0: off → use autograd for points,
+                # 1: tangent-based theta, 2: central-diff theta with fallback to tangent)
+                try:
+                    _geom_mode_env = os.environ.get("DIFFVG_SPLAT_VJP_GEOM", "")
+                    GEOM_MODE = int(_geom_mode_env) if _geom_mode_env.strip() != "" else 2
+                except Exception:
+                    GEOM_MODE = 2
                 try:
                     spec_counts = saved.get("spec_counts", None)
                     color_rgba_refs = saved.get("color_rgba_refs", None)
@@ -690,6 +732,7 @@ class SplatRenderFunction(torch.autograd.Function):
                             dmu_y_g = dmu_y[inv]
                             dtheta_g = dtheta[inv]
                             mu_g = mu[inv]
+                            sx_g = sigma_x[inv]
                         else:
                             dcolor_g = dcolor
                             dalpha_g = dalpha
@@ -699,6 +742,7 @@ class SplatRenderFunction(torch.autograd.Function):
                             dmu_y_g = dmu_y
                             dtheta_g = dtheta
                             mu_g = mu
+                            sx_g = sigma_x
                         # width scale from sigma_y = width / (fwhm_coeff * rho)
                         rho = max(float(request.config.rho), 1e-6)
                         fwhm_coeff = 2.0 * math.sqrt(2.0 * math.log(2.0))
@@ -727,9 +771,10 @@ class SplatRenderFunction(torch.autograd.Function):
                                     if isinstance(wref, torch.Tensor):
                                         gw = dsy_g[idx0:idx1].sum() * width_scale
                                         fused_map[id(wref)] = gw.expand_as(wref)
-                                # geometry fused VJP to points
+                                # geometry fused VJP to points (optional via env toggle)
                                 if (
-                                    isinstance(points_refs, list)
+                                    GEOM_MODE != 0
+                                    and isinstance(points_refs, list)
                                     and isinstance(control_counts_list, list)
                                     and isinstance(seg_idx_list, list)
                                     and isinstance(t_list, list)
@@ -744,32 +789,40 @@ class SplatRenderFunction(torch.autograd.Function):
                                         gmu = torch.stack([dmu_x_g[idx0:idx1], dmu_y_g[idx0:idx1]], dim=-1)
                                         extra = torch.zeros_like(gmu)
                                         if cnt >= 2:
+                                            # unit vectors along segments between neighboring samples
                                             d = mu_spec[1:] - mu_spec[:-1]
                                             den = torch.clamp(torch.linalg.norm(d, dim=-1, keepdim=True), min=1e-6)
                                             u = d / den
-                                            # dsx contribution shared between neighbors
-                                            g_to_dist = 0.5 * dsx_g[idx0:idx1-1] + 0.5 * dsx_g[idx0+1:idx1]
+                                            # spacing gradient from sigma_x: s = rho * sigma_x → dL/ds = (1/rho) * dL/dsigma_x
+                                            # apply clamp mask: if sigma_x clamped at min, zero its gradient contribution
+                                            sx_local = sx_g[idx0:idx1]
+                                            clamp_mask = (sx_local <= (1e-3 + 1e-12))
+                                            dsx_local = dsx_g[idx0:idx1] * (1.0 / rho)
+                                            dsx_local = torch.where(clamp_mask, torch.zeros_like(dsx_local), dsx_local)
+                                            # Per-segment gradient: interior seg k gets 0.5*dsx[k] + 0.5*dsx[k+1]
+                                            # Boundary segments also pick up the extra 0.5 for their single-sided sample
+                                            g_to_dist = 0.5 * dsx_local[:-1] + 0.5 * dsx_local[1:]
+                                            if cnt >= 2:
+                                                g_to_dist[0] = g_to_dist[0] + 0.5 * dsx_local[0]
+                                                g_to_dist[-1] = g_to_dist[-1] + 0.5 * dsx_local[-1]
                                             extra[:-1] += -u * g_to_dist.unsqueeze(-1)
                                             extra[1:]  +=  u * g_to_dist.unsqueeze(-1)
                                         gmu = gmu + extra
-                                        # Compute gradients to points via vectorized pos/tangent weights
+                                        # Compute gradients to points via cached indices + vectorized weights
                                         D = pref.device
                                         gp = torch.zeros_like(pref, device=D)
-                                        # Build per-segment start/end point indices
+                                        sidx = seg_idx_spec.to(torch.int64)
+                                        tval = tvals_spec.to(pref.dtype)
+                                        omt = 1.0 - tval
                                         cc_t = torch.tensor(cc, device=D, dtype=torch.int64)
                                         S = cc_t.numel()
                                         s_ids = torch.arange(S, device=D, dtype=torch.int64)
                                         csum = torch.cumsum(cc_t, dim=0)
-                                        # si0(s) = s + sum_{k<s} c_k
                                         si0_arr = s_ids + torch.cat([torch.zeros((1,), device=D, dtype=torch.int64), csum[:-1]], dim=0)
-                                        # si_end(s) = (s+1) + sum_{k<=s} c_k
                                         si_end_arr = (s_ids + 1) + csum
-                                        # Per-sample segment indices and t
-                                        sidx = seg_idx_spec.to(torch.int64)
-                                        tval = tvals_spec.to(pref.dtype)
-                                        omt = 1.0 - tval
-                                        # Degree masks
                                         deg = cc_t[sidx]
+                                        si0_all = si0_arr[sidx]
+                                        si_end_all = si_end_arr[sidx]
                                         m0 = (deg == 0)
                                         m1 = (deg == 1)
                                         m2 = (deg >= 2)
@@ -777,8 +830,8 @@ class SplatRenderFunction(torch.autograd.Function):
                                         if m0.any():
                                             w0 = omt[m0]
                                             w1 = tval[m0]
-                                            si0 = si0_arr[sidx[m0]]
-                                            si_end = si_end_arr[sidx[m0]]
+                                            si0 = si0_all[m0]
+                                            si_end = si_end_all[m0]
                                             g = gmu[m0]
                                             gp.index_add_(0, si0, g * w0.unsqueeze(-1))
                                             gp.index_add_(0, si_end, g * w1.unsqueeze(-1))
@@ -787,10 +840,10 @@ class SplatRenderFunction(torch.autograd.Function):
                                             w0 = oo * oo
                                             w1 = 2.0 * oo * tt
                                             w2 = tt * tt
-                                            base = si0_arr[sidx[m1]]
+                                            base = si0_all[m1]
                                             ci0 = base + 1
                                             si0 = base
-                                            si_end = si_end_arr[sidx[m1]]
+                                            si_end = si_end_all[m1]
                                             g = gmu[m1]
                                             gp.index_add_(0, si0, g * w0.unsqueeze(-1))
                                             gp.index_add_(0, ci0, g * w1.unsqueeze(-1))
@@ -802,69 +855,97 @@ class SplatRenderFunction(torch.autograd.Function):
                                             w1 = 3.0 * oo2 * tt
                                             w2 = 3.0 * oo * t2
                                             w3 = t2 * tt
-                                            base = si0_arr[sidx[m2]]
+                                            base = si0_all[m2]
                                             ci0 = base + 1
                                             ci1 = base + 2
                                             si0 = base
-                                            si_end = si_end_arr[sidx[m2]]
+                                            si_end = si_end_all[m2]
                                             g = gmu[m2]
                                             gp.index_add_(0, si0, g * w0.unsqueeze(-1))
                                             gp.index_add_(0, ci0, g * w1.unsqueeze(-1))
                                             gp.index_add_(0, ci1, g * w2.unsqueeze(-1))
                                             gp.index_add_(0, si_end, g * w3.unsqueeze(-1))
                                         # Theta contribution
-                                        gth = dtheta_g[idx0:idx1]
-                                        if torch.any(gth != 0):
-                                            # Build tangent vectors per sample from points (detached)
+                                        gth_all = dtheta_g[idx0:idx1]
+                                        if torch.any(gth_all != 0):
                                             ptsd = pref.detach()
-                                            gv_list = []
-                                            if m0.any():
-                                                si0 = si0_arr[sidx[m0]]
-                                                si_end = si_end_arr[sidx[m0]]
-                                                v = ptsd[si_end] - ptsd[si0]
-                                                denom = (v[:, 0] * v[:, 0] + v[:, 1] * v[:, 1]).clamp_min(1e-6)
-                                                gv = torch.stack([-v[:, 1] / denom, v[:, 0] / denom], dim=-1) * gth[m0].unsqueeze(-1)
-                                                # dt weights: [-1, +1]
-                                                gp.index_add_(0, si0, gv * (-1.0))
-                                                gp.index_add_(0, si_end, gv * (1.0))
-                                            if m1.any():
-                                                base = si0_arr[sidx[m1]]
-                                                si0 = base
-                                                ci0 = base + 1
-                                                si_end = si_end_arr[sidx[m1]]
-                                                tt = tval[m1]; oo = omt[m1]
-                                                v = 2.0 * (oo.unsqueeze(-1) * (ptsd[ci0] - ptsd[si0]) + tt.unsqueeze(-1) * (ptsd[si_end] - ptsd[ci0]))
-                                                denom = (v[:, 0] * v[:, 0] + v[:, 1] * v[:, 1]).clamp_min(1e-6)
-                                                gv = torch.stack([-v[:, 1] / denom, v[:, 0] / denom], dim=-1) * gth[m1].unsqueeze(-1)
-                                                dt0 = -2.0 * oo
-                                                dt1 = 2.0 * (1.0 - 2.0 * tt)
-                                                dt2 = 2.0 * tt
-                                                gp.index_add_(0, si0, gv * dt0.unsqueeze(-1))
-                                                gp.index_add_(0, ci0, gv * dt1.unsqueeze(-1))
-                                                gp.index_add_(0, si_end, gv * dt2.unsqueeze(-1))
-                                            if m2.any():
-                                                base = si0_arr[sidx[m2]]
-                                                si0 = base
-                                                ci0 = base + 1
-                                                ci1 = base + 2
-                                                si_end = si_end_arr[sidx[m2]]
-                                                tt = tval[m2]; oo = omt[m2]
-                                                oo2 = oo * oo; t2 = tt * tt
-                                                v = (
-                                                    3.0 * oo2.unsqueeze(-1) * (ptsd[ci0] - ptsd[si0])
-                                                    + 6.0 * (oo * tt).unsqueeze(-1) * (ptsd[ci1] - ptsd[ci0])
-                                                    + 3.0 * t2.unsqueeze(-1) * (ptsd[si_end] - ptsd[ci1])
-                                                )
-                                                denom = (v[:, 0] * v[:, 0] + v[:, 1] * v[:, 1]).clamp_min(1e-6)
-                                                gv = torch.stack([-v[:, 1] / denom, v[:, 0] / denom], dim=-1) * gth[m2].unsqueeze(-1)
-                                                dt0 = -3.0 * oo2
-                                                dt1 = 3.0 * oo2 - 6.0 * oo * tt
-                                                dt2 = 6.0 * oo * tt - 3.0 * t2
-                                                dt3 = 3.0 * t2
-                                                gp.index_add_(0, si0, gv * dt0.unsqueeze(-1))
-                                                gp.index_add_(0, ci0, gv * dt1.unsqueeze(-1))
-                                                gp.index_add_(0, ci1, gv * dt2.unsqueeze(-1))
-                                                gp.index_add_(0, si_end, gv * dt3.unsqueeze(-1))
+                                            cnt_i = cnt
+                                            j_idx = torch.arange(cnt_i, device=D)
+                                            mids = (j_idx >= 1) & (j_idx <= (cnt_i - 2))
+                                            use_central = torch.zeros((cnt_i,), dtype=torch.bool, device=D)
+                                            if GEOM_MODE == 2 and cnt_i >= 3:
+                                                # central-diff vector c = mu[j+1] - mu[j-1]
+                                                c = mu_spec[2:] - mu_spec[:-2]
+                                                cn2 = (c[:, 0] * c[:, 0] + c[:, 1] * c[:, 1])
+                                                good = cn2 > 1e-8
+                                                use_central[1:-1] = good
+                                                # gθ wrt c: [-c_y, c_x] / ||c||^2
+                                                gth_mid = gth_all[1:-1]
+                                                if good.any():
+                                                    cg = c[good]
+                                                    cn2g = cn2[good]
+                                                    gvec = torch.stack([-cg[:, 1] / cn2g, cg[:, 0] / cn2g], dim=-1) * gth_mid[good].unsqueeze(-1)
+                                                    # distribute to neighbors: μ[j+1] += gvec, μ[j-1] -= gvec
+                                                    idxs = torch.nonzero(good, as_tuple=False).squeeze(1)
+                                                    idx_plus = idxs + 2  # shift back to absolute indices j+1
+                                                    idx_minus = idxs     # absolute indices j-1 (since good aligns with c at positions 1..cnt-2 mapped to 0..cnt-3)
+                                                    # Prepare zero gmu_add then index_add
+                                                    gmu_add = torch.zeros_like(gmu)
+                                                    gmu_add.index_add_(0, idx_plus, gvec)
+                                                    gmu_add.index_add_(0, idx_minus, -gvec)
+                                                    gmu = gmu + gmu_add
+                                            # Tangent fallback (endpoints + bad mids) if any
+                                            tan_mask = (~use_central)
+                                            if tan_mask.any():
+                                                m0_t = m0 & tan_mask
+                                                m1_t = m1 & tan_mask
+                                                m2_t = m2 & tan_mask
+                                                if m0_t.any():
+                                                    si0 = si0_all[m0_t]
+                                                    si_end = si_end_all[m0_t]
+                                                    v = ptsd[si_end] - ptsd[si0]
+                                                    denom = (v[:, 0] * v[:, 0] + v[:, 1] * v[:, 1]).clamp_min(1e-6)
+                                                    gv = torch.stack([-v[:, 1] / denom, v[:, 0] / denom], dim=-1) * gth_all[m0_t].unsqueeze(-1)
+                                                    gp.index_add_(0, si0, gv * (-1.0))
+                                                    gp.index_add_(0, si_end, gv * (1.0))
+                                                if m1_t.any():
+                                                    base = si0_all[m1_t]
+                                                    si0 = base
+                                                    ci0 = base + 1
+                                                    si_end = si_end_all[m1_t]
+                                                    tt = tval[m1_t]; oo = omt[m1_t]
+                                                    v = 2.0 * (oo.unsqueeze(-1) * (ptsd[ci0] - ptsd[si0]) + tt.unsqueeze(-1) * (ptsd[si_end] - ptsd[ci0]))
+                                                    denom = (v[:, 0] * v[:, 0] + v[:, 1] * v[:, 1]).clamp_min(1e-6)
+                                                    gv = torch.stack([-v[:, 1] / denom, v[:, 0] / denom], dim=-1) * gth_all[m1_t].unsqueeze(-1)
+                                                    dt0 = -2.0 * oo
+                                                    dt1 = 2.0 * (1.0 - 2.0 * tt)
+                                                    dt2 = 2.0 * tt
+                                                    gp.index_add_(0, si0, gv * dt0.unsqueeze(-1))
+                                                    gp.index_add_(0, ci0, gv * dt1.unsqueeze(-1))
+                                                    gp.index_add_(0, si_end, gv * dt2.unsqueeze(-1))
+                                                if m2_t.any():
+                                                    base = si0_all[m2_t]
+                                                    si0 = base
+                                                    ci0 = base + 1
+                                                    ci1 = base + 2
+                                                    si_end = si_end_all[m2_t]
+                                                    tt = tval[m2_t]; oo = omt[m2_t]
+                                                    oo2 = oo * oo; t2 = tt * tt
+                                                    v = (
+                                                        3.0 * oo2.unsqueeze(-1) * (ptsd[ci0] - ptsd[si0])
+                                                        + 6.0 * (oo * tt).unsqueeze(-1) * (ptsd[ci1] - ptsd[ci0])
+                                                        + 3.0 * t2.unsqueeze(-1) * (ptsd[si_end] - ptsd[ci1])
+                                                    )
+                                                    denom = (v[:, 0] * v[:, 0] + v[:, 1] * v[:, 1]).clamp_min(1e-6)
+                                                    gv = torch.stack([-v[:, 1] / denom, v[:, 0] / denom], dim=-1) * gth_all[m2_t].unsqueeze(-1)
+                                                    dt0 = -3.0 * oo2
+                                                    dt1 = 3.0 * oo2 - 6.0 * oo * tt
+                                                    dt2 = 6.0 * oo * tt - 3.0 * t2
+                                                    dt3 = 3.0 * t2
+                                                    gp.index_add_(0, si0, gv * dt0.unsqueeze(-1))
+                                                    gp.index_add_(0, ci0, gv * dt1.unsqueeze(-1))
+                                                    gp.index_add_(0, ci1, gv * dt2.unsqueeze(-1))
+                                                    gp.index_add_(0, si_end, gv * dt3.unsqueeze(-1))
                                         # Register fused grad for this points tensor
                                         fused_map[id(pref)] = gp
                             idx0 = idx1
@@ -915,9 +996,30 @@ class SplatRenderFunction(torch.autograd.Function):
                         sx_v = sx_v[order_saved]
                         sy_v = sy_v[order_saved]
                         # col_v/opa_v ordering not needed for fused mapping
-                # If fused map covers all active slots, skip autograd VJP entirely
+                # If fused map covers all active slots, optionally compare with autograd VJP then skip it
                 input_tensors = [slot.tensor for slot in grad_slots]
+                compare_vjp = bool(int(os.environ.get("DIFFVG_SPLAT_VJP_COMPARE", "0") or "0"))
                 if all(id(t) in fused_map for t in input_tensors):
+                    if compare_vjp:
+                        # Build geometry-only VJP to compare
+                        vjp_all = [mu_v, th_v, sx_v, sy_v]
+                        g_mu = torch.stack([dmu_x, dmu_y], dim=-1)
+                        gout_all = [g_mu, dtheta, dsx, dsy]
+                        vjp_tensors = []
+                        grad_outputs = []
+                        for t, g in zip(vjp_all, gout_all):
+                            if isinstance(t, torch.Tensor) and t.requires_grad:
+                                vjp_tensors.append(t)
+                                grad_outputs.append(g)
+                        vjp_grads = torch.autograd.grad(vjp_tensors, input_tensors, grad_outputs=grad_outputs, allow_unused=True)
+                        # Compare per-input
+                        for slot, g_auto in zip(grad_slots, vjp_grads):
+                            g_fused = fused_map.get(id(slot.tensor))
+                            if isinstance(g_auto, torch.Tensor) and isinstance(g_fused, torch.Tensor):
+                                diff = (g_auto - g_fused).detach()
+                                l2 = float(torch.linalg.norm(diff).item())
+                                linf = float(torch.max(torch.abs(diff)).item())
+                                _trace(f"vjp-compare arg#{slot.arg_index} | l2={l2:.3e} linf={linf:.3e}")
                     total_args = len(args)
                     grad_list: List[Optional[torch.Tensor]] = [None] * (6 + total_args)
                     for slot in grad_slots:

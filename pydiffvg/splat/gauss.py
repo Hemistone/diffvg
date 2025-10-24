@@ -42,9 +42,12 @@ def _sample_path_geometry(
     pos, tan = _evaluate_segment(segments[0], start_t)
     mu_parts.append(pos)
     tan_parts.append(tan)
-
+    # record seg/t for the very first endpoint
     seg_ids: List[torch.Tensor] = []
     tvals_parts: List[torch.Tensor] = []
+    seg_ids.append(torch.zeros(1, device=device, dtype=torch.int64))
+    tvals_parts.append(start_t)
+
     for idx, segment in enumerate(segments):
         if idx > 0:
             corner_t = torch.zeros(1, device=device, dtype=dtype)
@@ -67,6 +70,9 @@ def _sample_path_geometry(
     pos_end, tan_end = _evaluate_segment(segments[-1], end_t)
     mu_parts.append(pos_end)
     tan_parts.append(tan_end)
+    # record seg/t for the very last endpoint
+    seg_ids.append(torch.full((1,), len(segments) - 1, device=device, dtype=torch.int64))
+    tvals_parts.append(end_t)
 
     mu = torch.cat(mu_parts, dim=0)
     tangents = torch.cat(tan_parts, dim=0)

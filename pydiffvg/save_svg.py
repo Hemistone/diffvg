@@ -24,6 +24,7 @@ def save_svg(
     shapes: List[object],
     shape_groups: List[object],
     use_gamma: bool = False,
+    background_rgb: tuple[float, float, float] | None = None,
 ) -> None:
     root = etree.Element('svg')
     root.set('version', '1.1')
@@ -32,6 +33,15 @@ def save_svg(
     root.set('height', str(height))
     defs = etree.SubElement(root, 'defs')
     g = etree.SubElement(root, 'g')
+    # Optional white (or specified) background rect to avoid transparency/black viewers
+    if background_rgb is not None:
+        br = etree.SubElement(g, 'rect')
+        br.set('x', '0')
+        br.set('y', '0')
+        br.set('width', str(width))
+        br.set('height', str(height))
+        r, gch, b = background_rgb
+        br.set('fill', f'rgb({int(255*r)}, {int(255*gch)}, {int(255*b)})')
     if use_gamma:
         f = etree.SubElement(defs, 'filter')
         f.set('id', 'gamma')
