@@ -129,3 +129,23 @@ Closed / Not Recommended
 - [note] Forward-side weight caching (wpos/wtan) remains gated under “planned” and should be considered only alongside a fused Triton kernel that consumes the weights directly.
 - [closed] CUDA Graph capture in painterly loop: renderer-only path could be made capture-safe, but perceptual losses (LPIPS/DISTS/… and potential CLIP features) perform internal tensor `.to(...)` and other dynamic ops that are not capture-safe on this stack. Keeping capture would require forking/wrapping each loss network, which is high maintenance. Decision: drop capture for painterly. Consider capture only for renderer microbenchmarks (no perceptuals) as a separate, opt-in path.
 - [closed] Fixed sampling plan (seg_idx/t) added only to stabilize capture shapes: negligible end-to-end benefit by itself and increases complexity. Remove for now. Re-introduce only if paired with a fused “curve→splat params” kernel that consumes the fixed indices directly.
+- [closed] Tiled early-out in Triton tiled compositor
+  - Idea: stop processing splats for a tile once all in-bounds pixels become nearly opaque (transmittance T ≤ ε). Implemented as tile-wide reductions in the Triton forward/backward kernels, guarded by env flags.
+  - Flags used (experiment only; not kept in master):
+    - `DIFFVG_SPLAT_T_EPS` (float, early-out threshold). Tested values: 1e-3, 5e-4.
+    - `DIFFVG_DEPTH_POLICY=large_first` (renders larger σ earlier to increase occlusion opportunities).
+    - Optional gates to reduce overhead when enabled: `DIFFVG_SPLAT_EO_PERIOD` (check every N splats, default 8), `DIFFVG_SPLAT_EO_MIN` (only check when tile has ≥M splats, default 32).
+    - A branch-only CSR variant without sort was also tried: `DIFFVG_SPLAT_CSR_NOSORT=1` (two-pass count→scan→scatter on GPU).
+  - What we measured on painterly (Fallingwater, 341x512, 512 paths):
+    - Baseline (EO off): ~3–5 s/iter (reference).
+    - EO on (`T_EPS` = 1e-3, 5e-4) with tiled compositor: no meaningful speedup over 32 iters; sometimes slightly slower (extra reductions/gates outweighed any early termination).
+    - A naive first pass caused major regressions (Δt ~25–30 s) due to Triton compile failures falling back to Torch and an expensive per-frame global sort in CSR; those were fixed during experiments, but EO still did not help the painterly workload.
+  - Technical notes from the trial:
+    - Triton 3.5.0 has no `tl.all`; used `tl.max` reductions to implement the tile-wide “all(T ≤ ε)” check.
+    - “No-sort CSR” prototype hit a GCC-13 ICE in Triton’s host stub generation with dynamic while loops; left as branch-only and disabled by default.
+    - Backward mirrored EO semantics using prefix/suffix transmittance to remain numerically stable; still no net win for painterly.
+  - Decision: do not merge EO into master. Keep the experiment confined to the feature branch and document here. Painterly at this resolution typically does not accumulate enough occlusion per tile for EO to pay off; the overhead of tile-wide reductions cancels any savings.
+  - Revisit only if:
+    - Target resolutions are much larger (e.g., ≥1080p) or scenes are overlap-heavy so tiles turn opaque early.
+    - CSR binning overhead is further reduced (e.g., robust no-sort or tile-local sort) and EO checks can be fused at negligible cost.
+    - A “large_first” or content-adaptive ordering demonstrates clear occlusion-dependent gains in microbenchmarks.
