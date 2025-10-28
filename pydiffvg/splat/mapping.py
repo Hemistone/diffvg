@@ -12,6 +12,7 @@ def build_splat_mapping_payload(
     cc_meta: List[List[int]],
     mu: torch.Tensor,
     spec_counts: List[int],
+    points_refs: List[Optional[torch.Tensor]],
 ) -> dict[str, object]:
     """Return per-splat metadata consumed by the fused VJP mapper."""
 
@@ -48,6 +49,14 @@ def build_splat_mapping_payload(
     else:
         spec_offsets = torch.zeros((1,), device=device_map, dtype=torch.int32)
 
+    # Points offsets (flattened pool) for all specs
+    points_offsets_list = [0]
+    for idx in range(len(spec_counts)):
+        pref = points_refs[idx] if idx < len(points_refs) else None
+        count = int(pref.shape[0]) if isinstance(pref, torch.Tensor) else 0
+        points_offsets_list.append(points_offsets_list[-1] + count)
+    points_offsets = torch.tensor(points_offsets_list, device=device_map, dtype=torch.int32)
+
     segment_degrees: List[torch.Tensor] = []
     segment_start_idx: List[torch.Tensor] = []
     segment_end_idx: List[torch.Tensor] = []
@@ -69,6 +78,27 @@ def build_splat_mapping_payload(
         segment_start_idx.append(si0)
         segment_end_idx.append(si_end)
 
+    sample_degrees = torch.empty(total, device=device_map, dtype=torch.int32)
+    sample_point_base = torch.empty(total, device=device_map, dtype=torch.int32)
+    sample_point_end = torch.empty(total, device=device_map, dtype=torch.int32)
+    offset = 0
+    for spec_idx, batch in enumerate(batches):
+        count = batch.mu.shape[0]
+        if count == 0:
+            continue
+        end = offset + count
+        seg_idx = sample_seg_idx[offset:end].to(torch.int64)
+        deg_tensor = segment_degrees[spec_idx]
+        si0 = segment_start_idx[spec_idx]
+        si_end = segment_end_idx[spec_idx]
+        base = si0[seg_idx]
+        end_idx = si_end[seg_idx]
+        sample_degrees[offset:end] = deg_tensor[seg_idx]
+        point_offset = points_offsets[spec_idx]
+        sample_point_base[offset:end] = base + point_offset
+        sample_point_end[offset:end] = end_idx + point_offset
+        offset = end
+
     spec_is_stroke = torch.zeros((len(spec_counts),), device=device_map, dtype=torch.uint8)
     if stroke_count > 0:
         spec_is_stroke[:stroke_count] = 1
@@ -83,14 +113,16 @@ def build_splat_mapping_payload(
         "segment_degrees": segment_degrees,
         "segment_start_idx": segment_start_idx,
         "segment_end_idx": segment_end_idx,
+        "points_offsets": points_offsets,
+        "sample_degrees": sample_degrees,
+        "sample_point_base": sample_point_base,
+        "sample_point_end": sample_point_end,
     }
 
 
-def map_triton_grads_to_slots(
+def _prepare_mapping_inputs(
     saved: dict,
     request,
-    args_with_grad: Tuple[object, ...],
-    grad_slots,
     dcolor: torch.Tensor,
     dalpha: torch.Tensor,
     dmu_x: torch.Tensor,
@@ -98,9 +130,7 @@ def map_triton_grads_to_slots(
     dtheta: torch.Tensor,
     dsx: torch.Tensor,
     dsy: torch.Tensor,
-) -> Optional[Tuple[Optional[torch.Tensor], ...]]:
-    """Bridge Triton gradients back to original scene tensors."""
-
+):
     spec_counts = saved.get("spec_counts")
     color_refs = saved.get("color_rgba_refs")
     width_refs = saved.get("stroke_width_refs")
@@ -155,8 +185,6 @@ def map_triton_grads_to_slots(
         sigma_x_g, sigma_y_g = sigma_x_vals, sigma_y_vals
 
     device = mu_g.device
-    dtype = mu_g.dtype
-
     if spec_counts:
         counts_tensor = torch.tensor(spec_counts, device=device, dtype=torch.int32)
         spec_offsets = torch.zeros((counts_tensor.numel() + 1,), device=device, dtype=torch.int32)
@@ -170,6 +198,77 @@ def map_triton_grads_to_slots(
     rho = max(float(request.config.rho), 1e-6)
     fwhm_coeff = 2.0 * math.sqrt(2.0 * math.log(2.0))
     width_scale = 1.0 / (fwhm_coeff * rho)
+
+    return {
+        "rho": rho,
+        "spec_counts": spec_counts,
+        "color_refs": color_refs,
+        "width_refs": width_refs,
+        "seg_idx_list": seg_idx_list,
+        "t_list": t_list,
+        "points_refs": points_refs,
+        "control_counts_list": control_counts_list,
+        "mu_g": mu_g,
+        "theta_g": theta_g,
+        "sigma_x_g": sigma_x_g,
+        "sigma_y_g": sigma_y_g,
+        "dcolor_g": dcolor_g,
+        "dalpha_g": dalpha_g,
+        "dmu_x_g": dmu_x_g,
+        "dmu_y_g": dmu_y_g,
+        "dtheta_g": dtheta_g,
+        "dsx_g": dsx_g,
+        "dsy_g": dsy_g,
+        "spec_offsets": spec_offsets,
+        "width_scale": width_scale,
+    }
+
+
+def _map_triton_grads_to_slots_python(
+    saved: dict,
+    request,
+    args_with_grad: Tuple[object, ...],
+    grad_slots,
+    dcolor: torch.Tensor,
+    dalpha: torch.Tensor,
+    dmu_x: torch.Tensor,
+    dmu_y: torch.Tensor,
+    dtheta: torch.Tensor,
+    dsx: torch.Tensor,
+    dsy: torch.Tensor,
+) -> Optional[Tuple[Optional[torch.Tensor], ...]]:
+    """Bridge Triton gradients back to original scene tensors (Python fallback)."""
+
+    prepared = _prepare_mapping_inputs(
+        saved, request, dcolor, dalpha, dmu_x, dmu_y, dtheta, dsx, dsy
+    )
+    if prepared is None:
+        return None
+
+    spec_counts = prepared["spec_counts"]
+    color_refs = prepared["color_refs"]
+    width_refs = prepared["width_refs"]
+    seg_idx_list = prepared["seg_idx_list"]
+    t_list = prepared["t_list"]
+    points_refs = prepared["points_refs"]
+    control_counts_list = prepared["control_counts_list"]
+    rho = prepared["rho"]
+    mu_g = prepared["mu_g"]
+    theta_g = prepared["theta_g"]
+    sigma_x_g = prepared["sigma_x_g"]
+    sigma_y_g = prepared["sigma_y_g"]
+    dcolor_g = prepared["dcolor_g"]
+    dalpha_g = prepared["dalpha_g"]
+    dmu_x_g = prepared["dmu_x_g"]
+    dmu_y_g = prepared["dmu_y_g"]
+    dtheta_g = prepared["dtheta_g"]
+    dsx_g = prepared["dsx_g"]
+    dsy_g = prepared["dsy_g"]
+    spec_offsets = prepared["spec_offsets"]
+    width_scale = prepared["width_scale"]
+
+    device = mu_g.device
+    dtype = mu_g.dtype
 
     override: dict[int, torch.Tensor] = {}
 
@@ -388,5 +487,64 @@ def map_triton_grads_to_slots(
     return tuple(grad_list)
 
 
-__all__ = ["build_splat_mapping_payload", "map_triton_grads_to_slots"]
+def _map_triton_grads_to_slots_gpu(
+    saved: dict,
+    request,
+    args_with_grad: Tuple[object, ...],
+    grad_slots,
+    dcolor: torch.Tensor,
+    dalpha: torch.Tensor,
+    dmu_x: torch.Tensor,
+    dmu_y: torch.Tensor,
+    dtheta: torch.Tensor,
+    dsx: torch.Tensor,
+    dsy: torch.Tensor,
+) -> Optional[Tuple[Optional[torch.Tensor], ...]]:
+    # TODO: GPU reduction kernel (Phase 1). For now, fall back to Python path.
+    return None
 
+
+def map_triton_grads_to_slots(
+    saved: dict,
+    request,
+    args_with_grad: Tuple[object, ...],
+    grad_slots,
+    dcolor: torch.Tensor,
+    dalpha: torch.Tensor,
+    dmu_x: torch.Tensor,
+    dmu_y: torch.Tensor,
+    dtheta: torch.Tensor,
+    dsx: torch.Tensor,
+    dsy: torch.Tensor,
+) -> Optional[Tuple[Optional[torch.Tensor], ...]]:
+    mapped = _map_triton_grads_to_slots_gpu(
+        saved,
+        request,
+        args_with_grad,
+        grad_slots,
+        dcolor,
+        dalpha,
+        dmu_x,
+        dmu_y,
+        dtheta,
+        dsx,
+        dsy,
+    )
+    if mapped is not None:
+        return mapped
+    return _map_triton_grads_to_slots_python(
+        saved,
+        request,
+        args_with_grad,
+        grad_slots,
+        dcolor,
+        dalpha,
+        dmu_x,
+        dmu_y,
+        dtheta,
+        dsx,
+        dsy,
+    )
+
+
+__all__ = ["build_splat_mapping_payload", "map_triton_grads_to_slots"]

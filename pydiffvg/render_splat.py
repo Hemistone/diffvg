@@ -211,6 +211,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                             cc_meta,
                             mu,
                             spec_counts,
+                            pts_meta,
                         )
                     )
                 except Exception:
@@ -319,6 +320,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                             cc_meta,
                             mu,
                             spec_counts,
+                            pts_meta,
                         ),
                     })
             if tile_size > 0:

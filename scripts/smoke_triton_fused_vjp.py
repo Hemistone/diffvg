@@ -173,6 +173,7 @@ def main() -> int:
             cc_meta,
             mu,
             spec_counts,
+            pts_meta,
         )
     )
 
