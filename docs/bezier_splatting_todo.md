@@ -113,7 +113,6 @@ Acceleration Roadmap
 
 - [todo] Triton fused VJP kernel (single‑kernel): compute Bézier weights on‑the‑fly and atomically accumulate dμ/dθ/dσx into control points in one kernel to reduce launches and host overhead.
 - [todo] GPU CSR no‑sort (two‑pass count→exclusive‑scan→scatter) to remove sort cost on overlap‑heavy tiles.
-- [todo] GPU CSR no‑sort (two‑pass count→exclusive‑scan→scatter) to remove sort cost on overlap‑heavy tiles.
 - [todo] CUDA Graph capture / `torch.compile` once kernel set is stable (no autograd VJP), to cut Python overhead per iteration.
 - [todo] Policy for no‑grad + tiling → Triton tiled forward by default when requested (raster‑only workloads).
 - [planned] Optional forward‑side caching of Bézier weights (wpos/wtan) in fp16 if profiling shows benefit in combination with fused kernel; keep disabled otherwise.
