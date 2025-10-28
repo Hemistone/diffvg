@@ -13,7 +13,6 @@ Preintegration Prep (Serialization & Cache)
 
 - [done] Extend `pydiffvg.serialize_scene` with an opt-in path that preserves tensors on `pydiffvg.get_device()`; keep baseline renderer on CPU while splat backend consumes the flag. (Profiling pending.)
 - [done] Thread a `keep_on_device`/`device` hint through backend selection so splat can request device-resident tensors without touching public APIs.
-- [todo] Audit shape/gradient handling once splat forward/backward exist to confirm autograd stability with GPU-resident tensors.
 - [rejected] Introduce a per-iteration Renderer cache for tile bins / splat buffers keyed by canvas+shape signature. Rationale: host-side cache invalidation/sync cost and scene churn offset any benefit in practice; GPU CSR binning dominates and makes this ineffective.
 - [rejected] Reuse allocations across iterations via cache toggles. Rationale: allocator reuse provided no measurable speedup on painterly workloads; added complexity and DX surface area without payoff.
 
@@ -24,7 +23,6 @@ Phases
 - [done] Backend selector: `pydiffvg.set_backend('baseline'|'splat')`, `pydiffvg.get_backend()`, env `DIFFVG_BACKEND`
 - [done] Backend registry: `pydiffvg/backends/registry.py` (internal), register baseline + splat
 - [done] Define backend_config (K, R, ρ, tile size, depth policy), defaults + env overrides
-- [todo] Wiring doc links: point contributors at docs/bezier_splatting.md for rationale + API expectations
 - [done] Unified tracing via `DIFFVG_SPLAT_TRACE` for parity/instrumentation
 
 1a) Forward (Open Strokes)
@@ -92,7 +90,6 @@ Immediate Validation Queue
 - [todo] Atomics contention microbench: sweep S‑chunk size (64/128/256) and measure scaling under high‑overlap tiles.
 - [todo] Numerical checks with suffix scans enabled: verify dA/da_i stability near a→1 and low‑opacity regimes.
 - [todo] “Crispness” checks: measure PSNR/SSIM vs. baseline on single-stroke scenes across widths and scales; assert no visible bead/blur at default settings.
-- [todo] FD-grad check on points, stroke width, and color for cubic path; tolerance thresholds recorded in repo.
 
 6) Integration & Determinism
 
@@ -113,12 +110,22 @@ Acceleration Roadmap
 
 - [todo] Triton fused VJP kernel (single‑kernel): compute Bézier weights on‑the‑fly and atomically accumulate dμ/dθ/dσx into control points in one kernel to reduce launches and host overhead.
 - [todo] GPU CSR no‑sort (two‑pass count→exclusive‑scan→scatter) to remove sort cost on overlap‑heavy tiles.
-- [todo] CUDA Graph capture / `torch.compile` once kernel set is stable (no autograd VJP), to cut Python overhead per iteration.
+- [closed] CUDA Graph capture in painterly (see below). Consider capture only for renderer‑only microbenchmarks (no perceptuals) as a separate, opt‑in path.
 - [todo] Policy for no‑grad + tiling → Triton tiled forward by default when requested (raster‑only workloads).
 - [planned] Optional forward‑side caching of Bézier weights (wpos/wtan) in fp16 if profiling shows benefit in combination with fused kernel; keep disabled otherwise.
+- [planned] Tiled early‑out (forward/backward): stop processing splats in a tile once transmittance falls below a small threshold; env‑guarded, default off.
+- [planned] Mixed‑precision storage: keep accumulators in fp32, store μ/θ/σx/σy/color/opacity in fp16/bf16; guard with `DIFFVG_SPLAT_DTYPE`; test PSNR/LPIPS deltas.
+- [todo] Triton tuning presets per arch (Ampere/Ada/Hopper): defaults for `DIFFVG_SPLAT_TILE`, `DIFFVG_SPLAT_WARPS/STAGES`, `DIFFVG_SPLAT_GCHUNK`, `DIFFVG_SPLAT_BWD_SCHUNK`; provide a small sweep script.
+
+Painterly App (robust with LPIPS/CLIP)
+
+- [planned] Loss cadence flag: compute perceptual loss every K steps, use MSE otherwise (`--perceptual_every K`).
+- [planned] Loss downsample flag: compute perceptual loss at scale S∈(0,1] (`--loss_downsample S`).
 
 Closed / Not Recommended
 
 - [closed] Host-side per-sample index caching in ctx (si0/si_end/ci0/ci1/deg): negligible or negative end-to-end impact; adds invalidation logic and sync points. Removed.
 - [closed] Per-iteration CSR/tile-bin caches on CPU: GPU-side CSR binning and on-device reductions dominate; host caches increased overhead. Removed.
 - [note] Forward-side weight caching (wpos/wtan) remains gated under “planned” and should be considered only alongside a fused Triton kernel that consumes the weights directly.
+- [closed] CUDA Graph capture in painterly loop: renderer-only path could be made capture-safe, but perceptual losses (LPIPS/DISTS/… and potential CLIP features) perform internal tensor `.to(...)` and other dynamic ops that are not capture-safe on this stack. Keeping capture would require forking/wrapping each loss network, which is high maintenance. Decision: drop capture for painterly. Consider capture only for renderer microbenchmarks (no perceptuals) as a separate, opt-in path.
+- [closed] Fixed sampling plan (seg_idx/t) added only to stabilize capture shapes: negligible end-to-end benefit by itself and increases complexity. Remove for now. Re-introduce only if paired with a fused “curve→splat params” kernel that consumes the fixed indices directly.
