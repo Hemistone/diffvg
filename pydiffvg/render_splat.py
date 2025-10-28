@@ -42,12 +42,12 @@ from .splat.vjp import (
     _enable_gradient_args,
     _scene_requires_grad,
 )
+from .splat.mapping import build_splat_mapping_payload, map_triton_grads_to_slots
 from .splat.debug import backward_tiled_full_python as _backward_tiled_full_python
 from .splat.scene import _prepare_render_request
 
 
 # Scene (de)serialization and request prep moved to pydiffvg/splat/scene.py
-
 
 
 def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> torch.Tensor:
@@ -176,7 +176,6 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                 # Save per-spec counts and references to original input tensors for fused VJP
                 try:
                     spec_counts: List[int] = [int(b.mu.shape[0]) for b in batches]
-                    # Build refs to original scene tensors
                     # Map shape_id -> color tensor for stroke/fill from scene
                     stroke_color_ref: dict[int, torch.Tensor] = {}
                     fill_color_ref: dict[int, torch.Tensor] = {}
@@ -205,6 +204,15 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                     payload["t_list"] = t_meta
                     payload["points_refs"] = pts_meta
                     payload["control_counts"] = cc_meta
+                    payload.update(
+                        build_splat_mapping_payload(
+                            batches,
+                            len(stroke_specs),
+                            cc_meta,
+                            mu,
+                            spec_counts,
+                        )
+                    )
                 except Exception:
                     pass
                 setattr(ctx, "splat_saved", payload)
@@ -305,6 +313,13 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                         "t_list": t_meta,
                         "points_refs": pts_meta,
                         "control_counts": cc_meta,
+                        **build_splat_mapping_payload(
+                            batches,
+                            len(stroke_specs),
+                            cc_meta,
+                            mu,
+                            spec_counts,
+                        ),
                     })
             if tile_size > 0:
                 return _triton.composite_gaussians_tiled_triton(
@@ -335,6 +350,32 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
     )
 
 
+def _map_triton_grads_to_slots(
+    saved: dict,
+    request: RenderRequest,
+    args_with_grad: Tuple[object, ...],
+    grad_slots: List[GradSlot],
+    dcolor: torch.Tensor,
+    dalpha: torch.Tensor,
+    dmu_x: torch.Tensor,
+    dmu_y: torch.Tensor,
+    dtheta: torch.Tensor,
+    dsx: torch.Tensor,
+    dsy: torch.Tensor,
+) -> Optional[Tuple[Optional[torch.Tensor], ...]]:
+    return map_triton_grads_to_slots(
+        saved,
+        request,
+        args_with_grad,
+        grad_slots,
+        dcolor,
+        dalpha,
+        dmu_x,
+        dmu_y,
+        dtheta,
+        dsx,
+        dsy,
+    )
 
 
 def _render_backward(
@@ -655,6 +696,21 @@ class SplatRenderFunction(torch.autograd.Function):
                 dsy = -disy / (sigma_y.clamp_min(1e-6) ** 2)
                 # Prepare grad slots and fused mappings for color/opacity/width
                 args_with_grad, grad_slots = _enable_gradient_args(args)
+                mapped = _map_triton_grads_to_slots(
+                    saved,
+                    request,
+                    args_with_grad,
+                    grad_slots,
+                    dcolor,
+                    dalpha,
+                    dmu_x,
+                    dmu_y,
+                    dtheta,
+                    dsx,
+                    dsy,
+                )
+                if mapped is not None:
+                    return mapped
                 fused_map: dict[int, torch.Tensor] = {}
                 try:
                     spec_counts = saved.get("spec_counts", None)
