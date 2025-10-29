@@ -111,7 +111,8 @@ Appendix) Performance notes (painterly)
 Acceleration Roadmap
 
 - [done] Triton fused VJP mapping: per-splat metadata now feeds Triton reducers/scatters that accumulate color/opacity/width and control-point grads directly on-device; Python VJP remains only as a fallback path.
-- [todo] GPU CSR no‑sort (two‑pass count→exclusive‑scan→scatter) to remove sort cost on overlap‑heavy tiles.
+- [done] GPU CSR no‑sort (two‑pass count→exclusive‑scan→scatter) to remove sort cost on overlap‑heavy tiles.
+  - fallingwater 512 paths × 32 iters: 52–54 s vs. 57–59 s baseline (≈5–10% faster end-to-end).
 - [closed] CUDA Graph capture in painterly (see below). Consider capture only for renderer‑only microbenchmarks (no perceptuals) as a separate, opt‑in path.
 - [todo] Policy for no‑grad + tiling → Triton tiled forward by default when requested (raster‑only workloads).
 - [planned] Optional forward‑side caching of Bézier weights (wpos/wtan) in fp16 if profiling shows benefit in combination with fused kernel; keep disabled otherwise.

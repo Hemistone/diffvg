@@ -9,36 +9,57 @@ from .runtime import is_available, tl, triton
 
 
 @triton.jit
-def _csr_fill_tiles_kernel(
-    tiles_out_ptr,  # int32 [total]
-    gauss_out_ptr,  # int32 [total]
-    gauss_ptr_ptr,  # int32 [N]
-    min_tx_ptr, max_tx_ptr,  # int32 [N]
-    min_ty_ptr, max_ty_ptr,  # int32 [N]
+def _csr_count_kernel(
+    min_tx_ptr,
+    max_tx_ptr,
+    min_ty_ptr,
+    max_ty_ptr,
+    tile_counts_ptr,
     tiles_x: tl.constexpr,
 ):
     pid = tl.program_id(0)
-    i = pid
-    x0 = tl.load(min_tx_ptr + i)
-    x1 = tl.load(max_tx_ptr + i)
-    y0 = tl.load(min_ty_ptr + i)
-    y1 = tl.load(max_ty_ptr + i)
-    # Skip if empty
-    cond_x = x1 >= x0
-    cond_y = y1 >= y0
-    if not (cond_x and cond_y):
+    x0 = tl.load(min_tx_ptr + pid)
+    x1 = tl.load(max_tx_ptr + pid)
+    y0 = tl.load(min_ty_ptr + pid)
+    y1 = tl.load(max_ty_ptr + pid)
+    if (x1 < x0) or (y1 < y0):
         return
-    base = tl.load(gauss_ptr_ptr + i)
-    pos = 0
     ty = y0
     while ty <= y1:
-        base_tile = ty * tiles_x
+        base = ty * tiles_x
         tx = x0
         while tx <= x1:
-            idx = base + pos
-            tl.store(tiles_out_ptr + idx, base_tile + tx)
-            tl.store(gauss_out_ptr + idx, i)
-            pos += 1
+            tile_id = base + tx
+            tl.atomic_add(tile_counts_ptr + tile_id, 1)
+            tx += 1
+        ty += 1
+
+
+@triton.jit
+def _csr_scatter_kernel(
+    tile_idx_ptr,
+    tile_write_ptr,
+    min_tx_ptr,
+    max_tx_ptr,
+    min_ty_ptr,
+    max_ty_ptr,
+    tiles_x: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    x0 = tl.load(min_tx_ptr + pid)
+    x1 = tl.load(max_tx_ptr + pid)
+    y0 = tl.load(min_ty_ptr + pid)
+    y1 = tl.load(max_ty_ptr + pid)
+    if (x1 < x0) or (y1 < y0):
+        return
+    ty = y0
+    while ty <= y1:
+        base = ty * tiles_x
+        tx = x0
+        while tx <= x1:
+            tile_id = base + tx
+            offset = tl.atomic_add(tile_write_ptr + tile_id, 1)
+            tl.store(tile_idx_ptr + offset, pid)
             tx += 1
         ty += 1
 
@@ -303,10 +324,10 @@ def _build_tile_csr(
     """Build CSR bins (tile_ptr, tile_idx).
 
     If Triton/CUDA is available, builds on GPU:
-      1) compute per‑gaussian tile rectangles (vectorized torch ops)
-      2) compute per‑gaussian counts and exclusive prefix gauss_ptr
-      3) Triton kernel fills flat arrays (tile_ids, gauss_ids)
-      4) sort by tile_ids and build tile_ptr via bincount
+      1) compute per-gaussian tile rectangles (vectorized torch ops)
+      2) compute per-gaussian coverage counts
+      3) Triton bin-count kernel accumulates per-tile totals (no global sort)
+      4) exclusive scan + scatter kernel fill CSR buffers
     Fallback to the previous CPU method otherwise.
     """
     device = mu.device
@@ -347,13 +368,7 @@ def _build_tile_csr(
                 tiles_x,
                 tiles_y,
             )
-        # Exclusive prefix sum of per‑gaussian counts
-        csum64 = torch.cumsum(gcounts.to(torch.int64), dim=0)
-        gauss_ptr64 = torch.empty((N + 1,), dtype=torch.int64, device=device)
-        gauss_ptr64[0] = 0
-        gauss_ptr64[1:] = csum64
-        gauss_ptr = gauss_ptr64.to(torch.int32)
-        total = int(gauss_ptr64[-1].item())
+        total = int(gcounts.to(torch.int64).sum().item())
         if total == 0:
             return (
                 torch.zeros(tiles_x * tiles_y + 1, dtype=torch.int32, device=device),
@@ -361,26 +376,43 @@ def _build_tile_csr(
                 tiles_x,
                 tiles_y,
             )
-        tiles_out = torch.empty((total,), dtype=torch.int32, device=device)
-        gauss_out = torch.empty((total,), dtype=torch.int32, device=device)
-
+        tile_counts = torch.zeros((tiles_x * tiles_y,), dtype=torch.int32, device=device)
         grid = (N,)
-        _csr_fill_tiles_kernel[grid](
-            tiles_out, gauss_out,
-            gauss_ptr,
-            min_tx.contiguous(), max_tx.contiguous(),
-            min_ty.contiguous(), max_ty.contiguous(),
+        _csr_count_kernel[grid](
+            min_tx.contiguous(),
+            max_tx.contiguous(),
+            min_ty.contiguous(),
+            max_ty.contiguous(),
+            tile_counts,
             tiles_x=tiles_x,
+            num_warps=1,
+            num_stages=1,
         )
-        # Sort by tile id and compute tile_ptr via bincount
-        tiles_sorted, perm = torch.sort(tiles_out)
-        tile_idx = gauss_out[perm]
-        # bincount expects int64 on some backends; ensure correct dtype
-        counts = torch.bincount(tiles_sorted.to(torch.int64), minlength=tiles_x * tiles_y)
         tile_ptr = torch.empty((tiles_x * tiles_y + 1,), dtype=torch.int32, device=device)
         tile_ptr[0] = 0
-        if counts.numel() > 0:
-            tile_ptr[1:] = torch.cumsum(counts, dim=0).to(torch.int32)
+        if tile_counts.numel() > 0:
+            tile_ptr[1:] = torch.cumsum(tile_counts.to(torch.int64), dim=0).to(torch.int32)
+        total = int(tile_ptr[-1].item())
+        if total == 0:
+            return (
+                tile_ptr,
+                torch.zeros(0, dtype=torch.int32, device=device),
+                tiles_x,
+                tiles_y,
+            )
+        tile_idx = torch.empty((total,), dtype=torch.int32, device=device)
+        tile_write = tile_ptr[:-1].clone()
+        _csr_scatter_kernel[grid](
+            tile_idx,
+            tile_write,
+            min_tx.contiguous(),
+            max_tx.contiguous(),
+            min_ty.contiguous(),
+            max_ty.contiguous(),
+            tiles_x=tiles_x,
+            num_warps=1,
+            num_stages=1,
+        )
         return tile_ptr, tile_idx, tiles_x, tiles_y
 
     # Fallback: CPU implementation (original path)
