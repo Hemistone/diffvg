@@ -10,6 +10,8 @@ from .splat.triton import (
     composite_gaussians_tiled_triton,
     backward_tiled_color_triton,
     backward_tiled_full_triton,
+    fused_spec_reduce_triton,
+    fused_points_scatter_triton,
     _build_tile_csr,
 )
 
@@ -23,5 +25,7 @@ __all__ = [
     "composite_gaussians_tiled_triton",
     "backward_tiled_color_triton",
     "backward_tiled_full_triton",
+    "fused_spec_reduce_triton",
+    "fused_points_scatter_triton",
     "_build_tile_csr",
 ]

@@ -257,7 +257,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
     # Prefer Triton full-frame compositor when available (strict only if explicitly requested)
     if _triton.is_available() and device.type == "cuda":
         try:
-            gchunk = int(os.environ.get("DIFFVG_SPLAT_GCHUNK", "256").strip() or "256")
+            gchunk = int(os.environ.get("DIFFVG_SPLAT_CHUNK", "256").strip() or "256")
         except Exception:
             gchunk = 256
         try:
@@ -672,7 +672,7 @@ class SplatRenderFunction(torch.autograd.Function):
                 )
                 # Robust fallback to Python reference if non-finite or near-zero
                 need_fallback = (not torch.isfinite(triton_total)) or float(triton_total.detach().cpu()) < 1e-9
-                strict_bwd = os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower() == "triton"
+                strict_bwd = os.environ.get("DIFFVG_SPLAT_IMPL", "").strip().lower() == "triton"
                 if need_fallback:
                     if strict_bwd:
                         raise RuntimeError("Triton backward produced non-finite or near-zero grads under strict mode")
@@ -1031,7 +1031,7 @@ class SplatRenderFunction(torch.autograd.Function):
                 return tuple(grad_list)
         except Exception as exc:
             # If user explicitly requested Triton backward via env, do not silently fallback
-            strict_bwd = os.environ.get("DIFFVG_SPLAT_BWD", "").strip().lower() == "triton"
+            strict_bwd = os.environ.get("DIFFVG_SPLAT_IMPL", "").strip().lower() == "triton"
             if strict_bwd:
                 raise
             _trace(f"triton backward unavailable: {type(exc).__name__}: {exc}")

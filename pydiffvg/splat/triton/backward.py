@@ -721,9 +721,190 @@ def backward_tiled_full_triton(
     return dcol, dopa, dmu_x, dmu_y, dtheta, disx, disy
 
 
+@triton.jit
+def _fused_color_width_kernel(
+    sample_spec_ptr,
+    dcolor_ptr,
+    dalpha_ptr,
+    dsy_ptr,
+    spec_is_stroke_ptr,
+    out_color_ptr,
+    out_alpha_ptr,
+    out_width_ptr,
+    total_samples: tl.constexpr,
+    num_specs: tl.constexpr,
+    width_scale: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    offs = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offs < total_samples
+    spec = tl.load(sample_spec_ptr + offs, mask=mask, other=0)
+    valid = mask & (spec >= 0) & (spec < num_specs)
+    base = offs * 3
+    dr = tl.load(dcolor_ptr + base + 0, mask=mask, other=0.0)
+    dg = tl.load(dcolor_ptr + base + 1, mask=mask, other=0.0)
+    db = tl.load(dcolor_ptr + base + 2, mask=mask, other=0.0)
+    da = tl.load(dalpha_ptr + offs, mask=mask, other=0.0)
+    dsy = tl.load(dsy_ptr + offs, mask=mask, other=0.0)
+    spec_i32 = spec.to(tl.int32)
+    color_index = spec_i32 * 3
+    tl.atomic_add(out_color_ptr + color_index + 0, tl.where(valid, dr, 0.0))
+    tl.atomic_add(out_color_ptr + color_index + 1, tl.where(valid, dg, 0.0))
+    tl.atomic_add(out_color_ptr + color_index + 2, tl.where(valid, db, 0.0))
+    tl.atomic_add(out_alpha_ptr + spec_i32, tl.where(valid, da, 0.0))
+    stroke_mask = tl.load(spec_is_stroke_ptr + spec_i32, mask=valid, other=0).to(tl.float32)
+    width_val = tl.where(valid, dsy * width_scale * stroke_mask, 0.0)
+    tl.atomic_add(out_width_ptr + spec_i32, width_val)
+
+
+def fused_spec_reduce_triton(
+    sample_spec_id: torch.Tensor,
+    dcolor: torch.Tensor,
+    dalpha: torch.Tensor,
+    dsy: torch.Tensor,
+    spec_is_stroke: torch.Tensor,
+    width_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if not (is_available() and sample_spec_id.is_cuda):
+        raise RuntimeError("Triton runtime unavailable for fused spec reduction")
+    total_samples = int(sample_spec_id.numel())
+    if total_samples == 0:
+        raise RuntimeError("No samples to reduce")
+    num_specs = int(spec_is_stroke.numel())
+    if num_specs == 0:
+        raise RuntimeError("No specs provided")
+    device = dcolor.device
+    dtype = dcolor.dtype
+    BLOCK = 256
+    grid = (triton.cdiv(total_samples, BLOCK),)
+    dcolor_flat = dcolor.contiguous().view(-1)
+    dalpha_flat = dalpha.contiguous()
+    dsy_flat = dsy.contiguous()
+    sample_spec_flat = sample_spec_id.contiguous()
+    spec_is_stroke_flat = spec_is_stroke.to(device=device, dtype=torch.int32, copy=False).contiguous()
+    out_color = torch.zeros((num_specs, 3), device=device, dtype=dtype)
+    out_alpha = torch.zeros((num_specs,), device=device, dtype=dtype)
+    out_width = torch.zeros((num_specs,), device=device, dtype=dtype)
+    _fused_color_width_kernel[grid](
+        sample_spec_flat,
+        dcolor_flat,
+        dalpha_flat,
+        dsy_flat,
+        spec_is_stroke_flat,
+        out_color.view(-1),
+        out_alpha,
+        out_width,
+        total_samples,
+        num_specs,
+        float(width_scale),
+        BLOCK=BLOCK,
+    )
+    return out_color, out_alpha, out_width
+
+
+@triton.jit
+def _fused_points_kernel(
+    gmu_x_ptr,
+    gmu_y_ptr,
+    degrees_ptr,
+    point_base_ptr,
+    point_end_ptr,
+    sample_t_ptr,
+    out_points_ptr,
+    total_points: tl.constexpr,
+    total_samples: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    if pid >= total_samples:
+        return
+    deg = tl.load(degrees_ptr + pid)
+    base = tl.load(point_base_ptr + pid)
+    end = tl.load(point_end_ptr + pid)
+    t = tl.load(sample_t_ptr + pid)
+    omt = 1.0 - t
+    gx = tl.load(gmu_x_ptr + pid)
+    gy = tl.load(gmu_y_ptr + pid)
+
+    def _atomic_add_point(idx: tl.tensor, wx: tl.tensor, wy: tl.tensor):
+        clamped = tl.clip(idx, 0, total_points - 1)
+        addr = clamped * 2
+        tl.atomic_add(out_points_ptr + addr + 0, wx)
+        tl.atomic_add(out_points_ptr + addr + 1, wy)
+
+    # Linear segment
+    if deg == 0:
+        w0 = omt
+        w1 = t
+        _atomic_add_point(base, gx * w0, gy * w0)
+        _atomic_add_point(end, gx * w1, gy * w1)
+        return
+
+    # Quadratic (one control)
+    if deg == 1:
+        w0 = omt * omt
+        w1 = 2.0 * omt * t
+        w2 = t * t
+        _atomic_add_point(base, gx * w0, gy * w0)
+        _atomic_add_point(base + 1, gx * w1, gy * w1)
+        _atomic_add_point(end, gx * w2, gy * w2)
+        return
+
+    # Cubic (two controls) and higher treated as cubic
+    oo = omt
+    oo2 = oo * oo
+    t2 = t * t
+    w0 = oo2 * oo
+    w1 = 3.0 * oo2 * t
+    w2 = 3.0 * oo * t2
+    w3 = t2 * t
+    _atomic_add_point(base, gx * w0, gy * w0)
+    _atomic_add_point(base + 1, gx * w1, gy * w1)
+    _atomic_add_point(base + 2, gx * w2, gy * w2)
+    _atomic_add_point(end, gx * w3, gy * w3)
+
+
+def fused_points_scatter_triton(
+    gmu: torch.Tensor,
+    sample_degrees: torch.Tensor,
+    sample_point_base: torch.Tensor,
+    sample_point_end: torch.Tensor,
+    sample_t: torch.Tensor,
+    out_points: torch.Tensor,
+) -> None:
+    if not (is_available() and gmu.is_cuda):
+        raise RuntimeError("Triton runtime unavailable for points scatter")
+    total_samples = int(gmu.shape[0])
+    if total_samples == 0:
+        return
+    total_points = int(out_points.shape[0])
+    if total_points == 0:
+        return
+    gmu = gmu.contiguous()
+    gmu_x = gmu[:, 0].contiguous()
+    gmu_y = gmu[:, 1].contiguous()
+    degrees = sample_degrees.contiguous().to(torch.int32)
+    point_base = sample_point_base.contiguous().to(torch.int32)
+    point_end = sample_point_end.contiguous().to(torch.int32)
+    tvals = sample_t.contiguous()
+    grid = (total_samples,)
+    out_flat = out_points.view(-1)
+    _fused_points_kernel[grid](
+        gmu_x,
+        gmu_y,
+        degrees,
+        point_base,
+        point_end,
+        tvals,
+        out_flat,
+        total_points,
+        total_samples,
+    )
 
 
 __all__ = [
     "backward_tiled_color_triton",
     "backward_tiled_full_triton",
+    "fused_spec_reduce_triton",
+    "fused_points_scatter_triton",
 ]

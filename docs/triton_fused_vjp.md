@@ -60,9 +60,10 @@ Kernel Plan
 
 Flags & Controls
 
-- `DIFFVG_SPLAT_BWD=triton-fused` → require the fused GPU mapping (error if unavailable); default keeps automatic fallback.
-- `DIFFVG_SPLAT_SAVE_MAP=1` → ensure per‑splat mapping tables are built/saved in forward; on by default for fused mode.
-- Existing tuning keepers: `DIFFVG_SPLAT_BWD_WARPS`, `DIFFVG_SPLAT_BWD_STAGES`, `DIFFVG_SPLAT_BWD_SCHUNK` (recommend 64 or 128), `DIFFVG_SPLAT_TILE`.
+- `DIFFVG_SPLAT_IMPL=triton` → require the Triton forward/backward path (error if unavailable); default keeps automatic fallback.
+- `DIFFVG_SPLAT_TRACE=1` → emit debug traces when the fused mapper falls back to the Python bridge (reason tagged once per process).
+- Core tunables: `DIFFVG_SPLAT_TILE` (tile size), `DIFFVG_SPLAT_CHUNK` (per-launch chunk size), `DIFFVG_SPLAT_BWD_WARPS`, `DIFFVG_SPLAT_BWD_STAGES`, `DIFFVG_SPLAT_BWD_SCHUNK`.
+- Device override: `DIFFVG_DEVICE=cpu|cuda[:index]` (defaults to CUDA when available).
 
 Numerics & AMP
 
@@ -80,7 +81,7 @@ Acceptance & Benchmarks
 
 Fallbacks
 
-- If Triton fused path yields non‑finite or near‑zero grads, fall back to the Python reference (or to Phase 1 GPU mapping), unless `DIFFVG_SPLAT_BWD=triton-fused` enforces strict.
+- If Triton fused path yields non‑finite or near‑zero grads, fall back to the Python reference (or to Phase 1 GPU mapping), unless `DIFFVG_SPLAT_IMPL=triton` enforces strict.
 - Preserve the current autograd VJP bridge as a last‑resort fallback.
 
 Work Items (Checklist)
@@ -104,3 +105,4 @@ References
 ## Progress Log
 
 - 2024-10-28: Forward caches now stash per-splat metadata via `build_splat_mapping_payload`; added `_map_triton_grads_to_slots` helper and smoke test (`scripts/smoke_triton_fused_vjp.py`) verifying parity with the existing autograd path. Remaining work: GPU reduce/scatter, kernel fusion, benchmarks, and doc status flip.
+- 2024-10-29: Implemented the scripted GPU reduce/scatter mapper (`_map_triton_grads_to_slots_gpu`) that consumes the cached metadata to accumulate color/opacity, stroke width, and control point grads directly. With `DIFFVG_SPLAT_IMPL=triton` the fused mapper now runs (and is required) end-to-end. Trimmed the mapper to operate directly on per-spec tensors, added Triton reductions for color/opacity/width + point scatter, and updated fallbacks to emit debug reasons. Next up: extend kernels for θ central-diff, add AMP guards, benchmark painterly on-GPU, and flip the TODO once fused consistently wins.

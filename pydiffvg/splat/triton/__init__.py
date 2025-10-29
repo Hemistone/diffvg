@@ -10,6 +10,8 @@ from .forward import (
 from .backward import (
     backward_tiled_color_triton,
     backward_tiled_full_triton,
+    fused_spec_reduce_triton,
+    fused_points_scatter_triton,
     get_last_backward_capture,
 )
 
@@ -23,6 +25,8 @@ __all__ = [
     "composite_gaussians_tiled_triton",
     "backward_tiled_color_triton",
     "backward_tiled_full_triton",
+    "fused_spec_reduce_triton",
+    "fused_points_scatter_triton",
     "get_last_backward_capture",
     "_build_tile_csr",
 ]

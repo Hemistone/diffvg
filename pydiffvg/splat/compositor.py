@@ -197,7 +197,7 @@ def _composite_gaussians_tiled(
     image_rgb = torch.zeros(height, width, 3, device=device, dtype=dtype)
     image_alpha = torch.zeros(height, width, device=device, dtype=dtype)
 
-    gchunk_env = os.environ.get("DIFFVG_SPLAT_TILE_GCHUNK", "128").strip() or "128"
+    gchunk_env = os.environ.get("DIFFVG_SPLAT_CHUNK", "128").strip() or "128"
     try:
         gchunk = max(1, int(gchunk_env))
     except Exception:
@@ -315,7 +315,7 @@ def _composite_gaussians_tiled_diff(
     out_rgb = torch.zeros(height, width, 3, device=device, dtype=dtype)
     out_alpha = torch.zeros(height, width, device=device, dtype=dtype)
 
-    gchunk_env = os.environ.get("DIFFVG_SPLAT_TILE_GCHUNK", "128").strip() or "128"
+    gchunk_env = os.environ.get("DIFFVG_SPLAT_CHUNK", "128").strip() or "128"
     try:
         gchunk = max(1, int(gchunk_env))
     except Exception:

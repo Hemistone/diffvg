@@ -115,7 +115,7 @@ Acceleration Roadmap
 - [planned] Optional forward‑side caching of Bézier weights (wpos/wtan) in fp16 if profiling shows benefit in combination with fused kernel; keep disabled otherwise.
 - [planned] Tiled early‑out (forward/backward): stop processing splats in a tile once transmittance falls below a small threshold; env‑guarded, default off.
 - [planned] Mixed‑precision storage: keep accumulators in fp32, store μ/θ/σx/σy/color/opacity in fp16/bf16; guard with `DIFFVG_SPLAT_DTYPE`; test PSNR/LPIPS deltas.
-- [todo] Triton tuning presets per arch (Ampere/Ada/Hopper): defaults for `DIFFVG_SPLAT_TILE`, `DIFFVG_SPLAT_WARPS/STAGES`, `DIFFVG_SPLAT_GCHUNK`, `DIFFVG_SPLAT_BWD_SCHUNK`; provide a small sweep script.
+- [todo] Triton tuning presets per arch (Ampere/Ada/Hopper): defaults for `DIFFVG_SPLAT_TILE`, `DIFFVG_SPLAT_WARPS/STAGES`, `DIFFVG_SPLAT_CHUNK`, `DIFFVG_SPLAT_BWD_SCHUNK`; provide a small sweep script.
 
 Painterly App (robust with LPIPS/CLIP)
 

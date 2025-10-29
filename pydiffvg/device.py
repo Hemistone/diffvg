@@ -27,6 +27,11 @@ def _cuda_compiled() -> bool:
 
 
 def _default_use_gpu() -> bool:
+    device_env = (os.environ.get("DIFFVG_DEVICE", "").strip() or "").lower()
+    if device_env == "cpu":
+        return False
+    if device_env == "cuda":
+        return _torch_gpu_available() and _cuda_compiled()
     if os.environ.get("DIFFVG_FORCE_CPU", "").strip() not in ("", "0", "false", "False"):
         return False
     if os.environ.get("DIFFVG_FORCE_GPU", "").strip() not in ("", "0", "false", "False"):
@@ -34,8 +39,27 @@ def _default_use_gpu() -> bool:
     return _torch_gpu_available() and _cuda_compiled()
 
 
-use_gpu: bool = _default_use_gpu()
-device: torch.device = torch.device('cuda') if use_gpu else torch.device('cpu')
+def _initial_device() -> torch.device:
+    device_env = os.environ.get("DIFFVG_DEVICE", "").strip().lower()
+    if device_env:
+        try:
+            target = torch.device(device_env)
+        except Exception:
+            target = torch.device("cuda" if device_env.startswith("cuda") else "cpu")
+        if target.type == "cuda":
+            if _cuda_compiled() and _torch_gpu_available():
+                return target
+            warnings.warn(
+                "DIFFVG_DEVICE requested CUDA but CUDA is unavailable; using CPU instead.",
+                RuntimeWarning,
+            )
+            return torch.device("cpu")
+        return target
+    return torch.device("cuda") if _default_use_gpu() else torch.device("cpu")
+
+
+device: torch.device = _initial_device()
+use_gpu: bool = device.type == "cuda"
 
 def set_use_gpu(v: bool) -> None:
     global use_gpu
