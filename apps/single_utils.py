@@ -209,23 +209,22 @@ def log_run_configuration(
     except Exception:  # pragma: no cover - defensive path
         backend_impl = "<unavailable>"
     print(f"[config] backend: {backend} ({backend_impl})")
-    try:
-        import pydiffvg.render_pytorch as _rp
-        print(f"[config] render_pytorch: {_rp.__file__}")
-    except Exception:
-        pass
-    keys = env_keys or (
-        "DIFFVG_FORCE_GPU",
-        "DIFFVG_CUDA",
-        "CUDA_VISIBLE_DEVICES",
-        "CUDA_LAUNCH_BLOCKING",
-        "DIFFVG_DISABLE_GPU_SORT",
-        "TORCH_CUDA_ARCH_LIST",
-        "CMAKE_CUDA_ARCHITECTURES",
-        "DIFFVG_SPLAT_TRACE",
-    )
+    # Report env vars that contain "CUDA", "TORCH", or "DIFFVG" (case-insensitive).
+    # If env_keys is provided, include those keys first (even if they don't match substrings).
+    substrings = ("cuda", "torch", "diffvg")
+
+    initial_keys = tuple(env_keys) if env_keys is not None else ()
+    keys_list = list(initial_keys)
+    keys_set = set(keys_list)
+
+    for name in os.environ:
+        lname = name.lower()
+        if any(sub in lname for sub in substrings) and name not in keys_set:
+            keys_list.append(name)
+            keys_set.add(name)
+
     found_any = False
-    for key in keys:
+    for key in keys_list:
         value = os.environ.get(key)
         if value is not None:
             if not found_any:
