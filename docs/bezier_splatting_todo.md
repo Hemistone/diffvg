@@ -24,6 +24,7 @@ Phases
 - [done] Backend registry: `pydiffvg/backends/registry.py` (internal), register baseline + splat
 - [done] Define backend_config (K, R, ρ, tile size, depth policy), defaults + env overrides
 - [done] Unified tracing via `DIFFVG_SPLAT_TRACE` for parity/instrumentation
+- [done] Simplified runtime knobs: `DIFFVG_SPLAT_IMPL=triton` enforces the Triton path (strict mode), shared chunk sizing via `DIFFVG_SPLAT_CHUNK`, and `DIFFVG_DEVICE=cpu|cuda[:index]` overrides the default CUDA device selection.
 
 1a) Forward (Open Strokes)
 
@@ -55,6 +56,7 @@ Phases
 - [done] Hybrid per‑tile Torch backward (sparse). Build per‑tile CSR over splats, recompute tile images with the same alpha‑over math, accumulate a single scalar loss, and call `torch.autograd.grad` on original inputs. Enabled by default for grad scenes when tiling>0.
 - [done] Triton backward (per‑tile) — color + alpha (prefix T). Emits dL/dcolor and dL/dα per splat in tiles; reduces on device; VJP bridge to inputs.
 - [done] Full Triton backward (per‑tile). Two‑pass (prefix/suffix) kernel emits per‑splat grads for {color, α, μx, μy, θ, 1/σx, 1/σy}; fused VJP maps directly to inputs; parity validated on painterly (tuning ongoing).
+- [done] Fused VJP mapper: Triton reducers for color/opacity/width and a point-scatter kernel replace the Python mapper when CUDA is available, with host fallbacks retained for CPU/error paths. Strict mode is controlled via `DIFFVG_SPLAT_IMPL=triton`.
 - [todo] Clamp σ and α in forward/backward to avoid NaNs; respect `torch.cuda.amp` autocast
 - [todo] Gradient check: single cubic stroke, finite-diff validator
 - [todo] Validate grads under length-adaptive sampling and spacing-aware α; ensure smoothness at joints/caps.
@@ -108,7 +110,7 @@ Appendix) Performance notes (painterly)
   
 Acceleration Roadmap
 
-- [todo] Triton fused VJP kernel (single‑kernel): compute Bézier weights on‑the‑fly and atomically accumulate dμ/dθ/dσx into control points in one kernel to reduce launches and host overhead.
+- [done] Triton fused VJP mapping: per-splat metadata now feeds Triton reducers/scatters that accumulate color/opacity/width and control-point grads directly on-device; Python VJP remains only as a fallback path.
 - [todo] GPU CSR no‑sort (two‑pass count→exclusive‑scan→scatter) to remove sort cost on overlap‑heavy tiles.
 - [closed] CUDA Graph capture in painterly (see below). Consider capture only for renderer‑only microbenchmarks (no perceptuals) as a separate, opt‑in path.
 - [todo] Policy for no‑grad + tiling → Triton tiled forward by default when requested (raster‑only workloads).
