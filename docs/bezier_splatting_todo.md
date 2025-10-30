@@ -117,7 +117,11 @@ Acceleration Roadmap
 - [todo] Policy for no‑grad + tiling → Triton tiled forward by default when requested (raster‑only workloads).
 - [planned] Optional forward‑side caching of Bézier weights (wpos/wtan) in fp16 if profiling shows benefit in combination with fused kernel; keep disabled otherwise.
 - [planned] Tiled early‑out (forward/backward): stop processing splats in a tile once transmittance falls below a small threshold; env‑guarded, default off.
-- [planned] Mixed‑precision storage: keep accumulators in fp32, store μ/θ/σx/σy/color/opacity in fp16/bf16; guard with `DIFFVG_SPLAT_DTYPE`; test PSNR/LPIPS deltas.
+- [closed] Mixed‑precision storage (fp16/bf16) for splat parameters.
+  - Tried two variants:
+    - v1: store μ/θ/σ/color/opacity in fp16 but recomputed cos/sin and 1/σ inside the Triton kernels. Result: painterly 341×512 with 512–1024 paths saw no gain (Δt stayed ~1.5–3.1 s/iter) because extra trig/div work offset the reduced loads.
+    - v2: precomputed fp32 cos/sin/invσ tables each render and joined them with fp16 SoA. Result: painterly still flat or slightly slower; per-frame fp16→fp32 expansion dominated any bandwidth savings.
+  - Decision: keep default fp32 storage. Revisit only if we redesign kernels to operate directly on half precision without per-frame fp32 materialization (or if a future workload shows clear HBM saturation).
 - [todo] Triton tuning presets per arch (Ampere/Ada/Hopper): defaults for `DIFFVG_SPLAT_TILE`, `DIFFVG_SPLAT_WARPS/STAGES`, `DIFFVG_SPLAT_CHUNK`, `DIFFVG_SPLAT_BWD_SCHUNK`; provide a small sweep script.
 
 Painterly App (robust with LPIPS/CLIP)
