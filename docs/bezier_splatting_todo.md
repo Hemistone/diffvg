@@ -79,8 +79,8 @@ Phases
 - [done] Triton forward kernels guarded by feature flags (`DIFFVG_SPLAT_IMPL=triton`), with tiled CSR and full‑frame variants. Torch remains as fallback/reference.
 - [done] Triton backward kernel (per‑tile) for color + alpha.
 - [done] Triton backward kernel (geometry/width) functionally complete; parity validated (tuning pending).
-- [done] Env knobs for backward launch: `DIFFVG_SPLAT_BWD_WARPS`, `DIFFVG_SPLAT_BWD_STAGES`, `DIFFVG_SPLAT_BWD_SCHUNK`.
-- [todo] In‑kernel S‑chunking (per tile): process splats in fixed chunks (e.g., 64/128) with shared prefetch; reduces register pressure and atomic contention. Expected +10–25% on heavy‑overlap tiles.
+- [done] Env knobs for backward launch: `DIFFVG_SPLAT_BWD_WARPS`, `DIFFVG_SPLAT_BWD_STAGES`.
+- [closed] In‑kernel S‑chunking (per tile): tried staging CSR slices in fixed chunks (env flag now removed). On painterly 341×512 with 1024 paths × 64 iter the per-iter time exploded (3m22s → 1m21s) due to register pressure and spills. Reverted to the per-splat loop; any revisit must start from fresh profiling (likely ≤8-splat staging with cooperative groups).
 - [planned] Per‑pixel backward variant: one program per pixel with small loops over tile splats (forward prefix + reverse suffix); block‑reduce then atomically add once per splat. Often higher occupancy; evaluate after fused per‑tile kernel.
 - [todo] Early culling inside tile: compute a cheap mask for negligible contribution (e.g., (qx²+qy²) < r²) to skip work on empty pixels per splat.
 - [todo] Launch tuning after refactors: pick per‑arch presets (e.g., BLOCK≈2048–4096, WARPS≈8, STAGES≈3 on SM89) and expose knob docs.
@@ -106,7 +106,7 @@ Appendix) Performance notes (painterly)
   - Python VJP bridge: geometry→Gaussian re-sampling and autograd graph build cost dominates. Next step: fuse VJP into Triton backward (direct grads to control points/widths).
   - CSR binning is on GPU (done), but current implementation uses sort+bincount; consider two‑pass no‑sort to reduce overhead in overlap‑heavy scenes.
   - Forward path: ensure Triton forward is enabled (`DIFFVG_SPLAT_IMPL=triton`) to avoid Torch compositing cost.
-  - Atomics contention on overlap‑heavy tiles; tune `DIFFVG_SPLAT_BWD_SCHUNK`, `DIFFVG_SPLAT_WARPS`, `DIFFVG_SPLAT_STAGES`
+  - Atomics contention on overlap‑heavy tiles; tune `DIFFVG_SPLAT_BWD_WARPS`, `DIFFVG_SPLAT_BWD_STAGES`
   
 Acceleration Roadmap
 
@@ -122,7 +122,7 @@ Acceleration Roadmap
     - v1: store μ/θ/σ/color/opacity in fp16 but recomputed cos/sin and 1/σ inside the Triton kernels. Result: painterly 341×512 with 512–1024 paths saw no gain (Δt stayed ~1.5–3.1 s/iter) because extra trig/div work offset the reduced loads.
     - v2: precomputed fp32 cos/sin/invσ tables each render and joined them with fp16 SoA. Result: painterly still flat or slightly slower; per-frame fp16→fp32 expansion dominated any bandwidth savings.
   - Decision: keep default fp32 storage. Revisit only if we redesign kernels to operate directly on half precision without per-frame fp32 materialization (or if a future workload shows clear HBM saturation).
-- [todo] Triton tuning presets per arch (Ampere/Ada/Hopper): defaults for `DIFFVG_SPLAT_TILE`, `DIFFVG_SPLAT_WARPS/STAGES`, `DIFFVG_SPLAT_CHUNK`, `DIFFVG_SPLAT_BWD_SCHUNK`; provide a small sweep script.
+- [todo] Triton tuning presets per arch (Ampere/Ada/Hopper): defaults for `DIFFVG_SPLAT_TILE`, `DIFFVG_SPLAT_WARPS/STAGES`, `DIFFVG_SPLAT_CHUNK`; provide a small sweep script.
 
 Painterly App (robust with LPIPS/CLIP)
 

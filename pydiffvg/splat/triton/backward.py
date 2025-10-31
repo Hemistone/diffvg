@@ -268,7 +268,6 @@ def _backward_tiled_full_kernel(
     tile_size: tl.constexpr,
     BLOCK_H: tl.constexpr,
     BLOCK_W: tl.constexpr,
-    S_CHUNK: tl.constexpr,  # 0 disables, otherwise reverse loop chunk size
     MAX_SPLATS: tl.constexpr,
     CAPTURE: tl.constexpr,
 ):
@@ -326,224 +325,112 @@ def _backward_tiled_full_kernel(
     total_product = tl.where(mask, total_product, 1.0)
     grad_trans_prev_next = tl.zeros((BLOCK_H, BLOCK_W), dtype=tl.float32)
     trans_after = tl.zeros((BLOCK_H, BLOCK_W), dtype=tl.float32) + 1.0
-    if S_CHUNK == 0:
-        j = e - 1
-        while j >= s:
-            gi = tl.load(tile_idx_ptr + j)
-            mu_x = tl.load(mu_x_ptr + gi)
-            mu_y = tl.load(mu_y_ptr + gi)
-            cth = tl.load(cos_ptr + gi)
-            sth = tl.load(sin_ptr + gi)
-            isx = tl.load(invsx_ptr + gi)
-            isy = tl.load(invsy_ptr + gi)
-            o   = tl.load(opacity_ptr + gi)
-            cr = tl.load(col_r_ptr + gi)
-            cg = tl.load(col_g_ptr + gi)
-            cb = tl.load(col_b_ptr + gi)
+    j = e - 1
+    while j >= s:
+        gi = tl.load(tile_idx_ptr + j)
+        mu_x = tl.load(mu_x_ptr + gi)
+        mu_y = tl.load(mu_y_ptr + gi)
+        cth = tl.load(cos_ptr + gi)
+        sth = tl.load(sin_ptr + gi)
+        isx = tl.load(invsx_ptr + gi)
+        isy = tl.load(invsy_ptr + gi)
+        o   = tl.load(opacity_ptr + gi)
+        cr = tl.load(col_r_ptr + gi)
+        cg = tl.load(col_g_ptr + gi)
+        cb = tl.load(col_b_ptr + gi)
 
-            dx = gx - mu_x
-            dy = gy - mu_y
-            lx = cth * dx + sth * dy
-            ly = -sth * dx + cth * dy
-            txx = lx * isx
-            tyy = ly * isy
-            expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
-            ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
-            ai = tl.where(mask, ai, 0.0)
+        dx = gx - mu_x
+        dy = gy - mu_y
+        lx = cth * dx + sth * dy
+        ly = -sth * dx + cth * dy
+        txx = lx * isx
+        tyy = ly * isy
+        expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
+        ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+        ai = tl.where(mask, ai, 0.0)
 
-            one_minus_ai = tl.maximum(1.0 - ai, LOG_EPS)
-            denom = tl.maximum(one_minus_ai * trans_after, LOG_EPS)
-            T_i = total_product / denom
-            T_i = tl.where(mask, T_i, 0.0)
+        one_minus_ai = tl.maximum(1.0 - ai, LOG_EPS)
+        denom = tl.maximum(one_minus_ai * trans_after, LOG_EPS)
+        T_i = total_product / denom
+        T_i = tl.where(mask, T_i, 0.0)
 
-            contrib = T_i * ai
-            m_r = tl.where(mask, gr * contrib, 0.0)
-            m_g = tl.where(mask, gg * contrib, 0.0)
-            m_b = tl.where(mask, gb * contrib, 0.0)
-            # Reduce over 2D tile explicitly (row then col) to avoid edge cases
-            val_r = tl.sum(tl.sum(m_r, axis=1), axis=0)
-            val_g = tl.sum(tl.sum(m_g, axis=1), axis=0)
-            val_b = tl.sum(tl.sum(m_b, axis=1), axis=0)
-            tl.atomic_add(dcol_r_ptr + gi, val_r)
-            tl.atomic_add(dcol_g_ptr + gi, val_g)
-            tl.atomic_add(dcol_b_ptr + gi, val_b)
+        contrib = T_i * ai
+        m_r = tl.where(mask, gr * contrib, 0.0)
+        m_g = tl.where(mask, gg * contrib, 0.0)
+        m_b = tl.where(mask, gb * contrib, 0.0)
+        # Reduce over 2D tile explicitly (row then col) to avoid edge cases
+        val_r = tl.sum(tl.sum(m_r, axis=1), axis=0)
+        val_g = tl.sum(tl.sum(m_g, axis=1), axis=0)
+        val_b = tl.sum(tl.sum(m_b, axis=1), axis=0)
+        tl.atomic_add(dcol_r_ptr + gi, val_r)
+        tl.atomic_add(dcol_g_ptr + gi, val_g)
+        tl.atomic_add(dcol_b_ptr + gi, val_b)
 
-            dot_color = gr * cr + gg * cg + gb * cb
-            grad_contrib = tl.where(mask, dot_color + ga, 0.0)
-            grad_ai = T_i * (grad_contrib - grad_trans_prev_next)
-            grad_ai = tl.where(mask, grad_ai, 0.0)
-            grad_trans_prev = grad_contrib * ai + grad_trans_prev_next * (1.0 - ai)
-            grad_trans_prev = tl.where(mask, grad_trans_prev, 0.0)
-            grad_trans_prev_next = grad_trans_prev
+        dot_color = gr * cr + gg * cg + gb * cb
+        grad_contrib = tl.where(mask, dot_color + ga, 0.0)
+        grad_ai = T_i * (grad_contrib - grad_trans_prev_next)
+        grad_ai = tl.where(mask, grad_ai, 0.0)
+        grad_trans_prev = grad_contrib * ai + grad_trans_prev_next * (1.0 - ai)
+        grad_trans_prev = tl.where(mask, grad_trans_prev, 0.0)
+        grad_trans_prev_next = grad_trans_prev
 
-            pre = o * expv
-            CLAMP_EPS = 1e-6
-            clamp_mask = (pre > CLAMP_EPS) & (pre < 1.0 - CLAMP_EPS)
-            grad_pre = tl.where(clamp_mask & mask, grad_ai, 0.0)
-            grad_opacity = grad_pre * expv
-            val_a = tl.sum(tl.sum(grad_opacity, axis=0), axis=0)
-            tl.atomic_add(dopa_ptr + gi, val_a)
+        pre = o * expv
+        CLAMP_EPS = 1e-6
+        clamp_mask = (pre > CLAMP_EPS) & (pre < 1.0 - CLAMP_EPS)
+        grad_pre = tl.where(clamp_mask & mask, grad_ai, 0.0)
+        grad_opacity = grad_pre * expv
+        val_a = tl.sum(tl.sum(grad_opacity, axis=0), axis=0)
+        tl.atomic_add(dopa_ptr + gi, val_a)
 
-            grad_expv = grad_pre * o
-            grad_q = grad_expv * expv * (-0.5)
-            tmpx = lx * isx
-            tmpy = ly * isy
-            grad_lx = grad_q * (2.0 * tmpx * isx)
-            grad_ly = grad_q * (2.0 * tmpy * isy)
-            grad_isx = grad_q * (2.0 * tmpx * lx)
-            grad_isy = grad_q * (2.0 * tmpy * ly)
-            grad_dx = grad_lx * cth + grad_ly * (-sth)
-            grad_dy = grad_lx * sth + grad_ly * cth
-            grad_cth = grad_lx * dx + grad_ly * dy
-            grad_sth = grad_lx * dy - grad_ly * dx
-            grad_theta = grad_cth * (-sth) + grad_sth * cth
-            grad_mu_x = -grad_dx
-            grad_mu_y = -grad_dy
+        grad_expv = grad_pre * o
+        grad_q = grad_expv * expv * (-0.5)
+        tmpx = lx * isx
+        tmpy = ly * isy
+        grad_lx = grad_q * (2.0 * tmpx * isx)
+        grad_ly = grad_q * (2.0 * tmpy * isy)
+        grad_isx = grad_q * (2.0 * tmpx * lx)
+        grad_isy = grad_q * (2.0 * tmpy * ly)
+        grad_dx = grad_lx * cth + grad_ly * (-sth)
+        grad_dy = grad_lx * sth + grad_ly * cth
+        grad_cth = grad_lx * dx + grad_ly * dy
+        grad_sth = grad_lx * dy - grad_ly * dx
+        grad_theta = grad_cth * (-sth) + grad_sth * cth
+        grad_mu_x = -grad_dx
+        grad_mu_y = -grad_dy
 
-            m_isx = tl.where(mask, grad_isx, 0.0)
-            m_isy = tl.where(mask, grad_isy, 0.0)
-            add_isx = tl.sum(tl.sum(m_isx, axis=0), axis=0)
-            add_isy = tl.sum(tl.sum(m_isy, axis=0), axis=0)
-            tl.atomic_add(disx_ptr + gi, add_isx)
-            tl.atomic_add(disy_ptr + gi, add_isy)
+        m_isx = tl.where(mask, grad_isx, 0.0)
+        m_isy = tl.where(mask, grad_isy, 0.0)
+        add_isx = tl.sum(tl.sum(m_isx, axis=0), axis=0)
+        add_isy = tl.sum(tl.sum(m_isy, axis=0), axis=0)
+        tl.atomic_add(disx_ptr + gi, add_isx)
+        tl.atomic_add(disy_ptr + gi, add_isy)
 
-            m_mx = tl.where(mask, grad_mu_x, 0.0)
-            m_my = tl.where(mask, grad_mu_y, 0.0)
-            m_th = tl.where(mask, grad_theta, 0.0)
-            val_mx = tl.sum(tl.sum(m_mx, axis=0), axis=0)
-            val_my = tl.sum(tl.sum(m_my, axis=0), axis=0)
-            val_th = tl.sum(tl.sum(m_th, axis=0), axis=0)
-            tl.atomic_add(dmu_x_ptr + gi, val_mx)
-            tl.atomic_add(dmu_y_ptr + gi, val_my)
-            tl.atomic_add(dtheta_ptr + gi, val_th)
+        m_mx = tl.where(mask, grad_mu_x, 0.0)
+        m_my = tl.where(mask, grad_mu_y, 0.0)
+        m_th = tl.where(mask, grad_theta, 0.0)
+        val_mx = tl.sum(tl.sum(m_mx, axis=0), axis=0)
+        val_my = tl.sum(tl.sum(m_my, axis=0), axis=0)
+        val_th = tl.sum(tl.sum(m_th, axis=0), axis=0)
+        tl.atomic_add(dmu_x_ptr + gi, val_mx)
+        tl.atomic_add(dmu_y_ptr + gi, val_my)
+        tl.atomic_add(dtheta_ptr + gi, val_th)
 
-            new_trans_after = trans_after * tl.maximum(one_minus_ai, LOG_EPS)
-            trans_after = tl.where(mask, new_trans_after, trans_after)
+        new_trans_after = trans_after * tl.maximum(one_minus_ai, LOG_EPS)
+        trans_after = tl.where(mask, new_trans_after, trans_after)
 
-            if CAPTURE:
-                local_idx = (e - 1) - j
-                base_idx = tile_id * MAX_SPLATS + local_idx
-                sum_T = tl.sum(tl.where(mask, T_i, 0.0))
-                sum_ai = tl.sum(tl.where(mask, ai, 0.0))
-                sum_contrib = tl.sum(tl.where(mask, contrib, 0.0))
-                sum_grad_ai = tl.sum(tl.where(mask, grad_ai, 0.0))
-                tl.store(capture_T_ptr + base_idx, sum_T)
-                tl.store(capture_ai_ptr + base_idx, sum_ai)
-                tl.store(capture_contrib_ptr + base_idx, sum_contrib)
-                tl.store(capture_grad_ai_ptr + base_idx, sum_grad_ai)
+        if CAPTURE:
+            local_idx = (e - 1) - j
+            base_idx = tile_id * MAX_SPLATS + local_idx
+            sum_T = tl.sum(tl.where(mask, T_i, 0.0))
+            sum_ai = tl.sum(tl.where(mask, ai, 0.0))
+            sum_contrib = tl.sum(tl.where(mask, contrib, 0.0))
+            sum_grad_ai = tl.sum(tl.where(mask, grad_ai, 0.0))
+            tl.store(capture_T_ptr + base_idx, sum_T)
+            tl.store(capture_ai_ptr + base_idx, sum_ai)
+            tl.store(capture_contrib_ptr + base_idx, sum_contrib)
+            tl.store(capture_grad_ai_ptr + base_idx, sum_grad_ai)
 
-            j -= 1
-    else:
-        # Process in segments of S_CHUNK to avoid large inner products
-        j_end = e
-        while j_end > s:
-            j_start = tl.maximum(j_end - S_CHUNK, s)
-            j = j_end - 1
-            while j >= j_start:
-                gi = tl.load(tile_idx_ptr + j)
-                mu_x = tl.load(mu_x_ptr + gi)
-                mu_y = tl.load(mu_y_ptr + gi)
-                cth = tl.load(cos_ptr + gi)
-                sth = tl.load(sin_ptr + gi)
-                isx = tl.load(invsx_ptr + gi)
-                isy = tl.load(invsy_ptr + gi)
-                o   = tl.load(opacity_ptr + gi)
-                cr = tl.load(col_r_ptr + gi)
-                cg = tl.load(col_g_ptr + gi)
-                cb = tl.load(col_b_ptr + gi)
-
-                dx = gx - mu_x
-                dy = gy - mu_y
-                lx = cth * dx + sth * dy
-                ly = -sth * dx + cth * dy
-                txx = lx * isx
-                tyy = ly * isy
-                expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
-                ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
-                ai = tl.where(mask, ai, 0.0)
-
-                one_minus_ai = tl.maximum(1.0 - ai, LOG_EPS)
-                denom = tl.maximum(one_minus_ai * trans_after, LOG_EPS)
-                T_i = total_product / denom
-                T_i = tl.where(mask, T_i, 0.0)
-
-                contrib = T_i * ai
-                m_r = tl.where(mask, gr * contrib, 0.0)
-                m_g = tl.where(mask, gg * contrib, 0.0)
-                m_b = tl.where(mask, gb * contrib, 0.0)
-                val_r = tl.sum(tl.sum(m_r, axis=1), axis=0)
-                val_g = tl.sum(tl.sum(m_g, axis=1), axis=0)
-                val_b = tl.sum(tl.sum(m_b, axis=1), axis=0)
-                tl.atomic_add(dcol_r_ptr + gi, val_r)
-                tl.atomic_add(dcol_g_ptr + gi, val_g)
-                tl.atomic_add(dcol_b_ptr + gi, val_b)
-
-                dot_color = gr * cr + gg * cg + gb * cb
-                grad_contrib = tl.where(mask, dot_color + ga, 0.0)
-                grad_ai = T_i * (grad_contrib - grad_trans_prev_next)
-                grad_ai = tl.where(mask, grad_ai, 0.0)
-                grad_trans_prev = grad_contrib * ai + grad_trans_prev_next * (1.0 - ai)
-                grad_trans_prev = tl.where(mask, grad_trans_prev, 0.0)
-                grad_trans_prev_next = grad_trans_prev
-
-                pre = o * expv
-                CLAMP_EPS = 1e-6
-                clamp_mask = (pre > CLAMP_EPS) & (pre < 1.0 - CLAMP_EPS)
-                grad_pre = tl.where(clamp_mask & mask, grad_ai, 0.0)
-                grad_opacity = grad_pre * expv
-                val_a = tl.sum(tl.sum(grad_opacity, axis=0), axis=0)
-                tl.atomic_add(dopa_ptr + gi, val_a)
-
-                grad_expv = grad_pre * o
-                grad_q = grad_expv * expv * (-0.5)
-                tmpx = lx * isx
-                tmpy = ly * isy
-                grad_lx = grad_q * (2.0 * tmpx * isx)
-                grad_ly = grad_q * (2.0 * tmpy * isy)
-                grad_isx = grad_q * (2.0 * tmpx * lx)
-                grad_isy = grad_q * (2.0 * tmpy * ly)
-                grad_dx = grad_lx * cth + grad_ly * (-sth)
-                grad_dy = grad_lx * sth + grad_ly * cth
-                grad_cth = grad_lx * dx + grad_ly * dy
-                grad_sth = grad_lx * dy - grad_ly * dx
-                grad_theta = grad_cth * (-sth) + grad_sth * cth
-                grad_mu_x = -grad_dx
-                grad_mu_y = -grad_dy
-
-                m_isx = tl.where(mask, grad_isx, 0.0)
-                m_isy = tl.where(mask, grad_isy, 0.0)
-                add_isx = tl.sum(tl.sum(m_isx, axis=0), axis=0)
-                add_isy = tl.sum(tl.sum(m_isy, axis=0), axis=0)
-                tl.atomic_add(disx_ptr + gi, add_isx)
-                tl.atomic_add(disy_ptr + gi, add_isy)
-
-                m_mx = tl.where(mask, grad_mu_x, 0.0)
-                m_my = tl.where(mask, grad_mu_y, 0.0)
-                m_th = tl.where(mask, grad_theta, 0.0)
-                val_mx = tl.sum(tl.sum(m_mx, axis=0), axis=0)
-                val_my = tl.sum(tl.sum(m_my, axis=0), axis=0)
-                val_th = tl.sum(tl.sum(m_th, axis=0), axis=0)
-                tl.atomic_add(dmu_x_ptr + gi, val_mx)
-                tl.atomic_add(dmu_y_ptr + gi, val_my)
-                tl.atomic_add(dtheta_ptr + gi, val_th)
-
-                new_trans_after = trans_after * tl.maximum(one_minus_ai, LOG_EPS)
-                trans_after = tl.where(mask, new_trans_after, trans_after)
-
-                if CAPTURE and S_CHUNK == 0:
-                    local_idx = j - s
-                    base_idx = tile_id * MAX_SPLATS + local_idx
-                    sum_T = tl.sum(tl.where(mask, T_i, 0.0))
-                    sum_ai = tl.sum(tl.where(mask, ai, 0.0))
-                    sum_contrib = tl.sum(tl.where(mask, contrib, 0.0))
-                    sum_grad_ai = tl.sum(tl.where(mask, grad_ai, 0.0))
-                    tl.store(capture_T_ptr + base_idx, sum_T)
-                    tl.store(capture_ai_ptr + base_idx, sum_ai)
-                    tl.store(capture_contrib_ptr + base_idx, sum_contrib)
-                    tl.store(capture_grad_ai_ptr + base_idx, sum_grad_ai)
-
-                j -= 1
-            j_end = j_start
+        j -= 1
 
 
 def backward_tiled_full_triton(
@@ -636,7 +523,6 @@ def backward_tiled_full_triton(
             return default
     bw_warps = _env_int("DIFFVG_SPLAT_BWD_WARPS", 4)
     bw_stages = _env_int("DIFFVG_SPLAT_BWD_STAGES", 2)
-    s_chunk = _env_int("DIFFVG_SPLAT_BWD_SCHUNK", 0)
     _log_prefix_stats(
         mu,
         theta,
@@ -661,7 +547,7 @@ def backward_tiled_full_triton(
         tile_ptr.contiguous(), tile_idx.contiguous(),
         capture_T_buf.view(-1), capture_ai_buf.view(-1), capture_contrib_buf.view(-1), capture_grad_ai_buf.view(-1),
         width, height, tiles_x, tile_size,
-        BLOCK_H=BLOCK, BLOCK_W=BLOCK, S_CHUNK=s_chunk,
+        BLOCK_H=BLOCK, BLOCK_W=BLOCK,
         MAX_SPLATS=max_splats_per_tile,
         CAPTURE=int(want_capture),
         num_warps=bw_warps, num_stages=bw_stages,
