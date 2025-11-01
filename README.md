@@ -199,7 +199,7 @@ Painterly rendering
 
 ```
 painterly_rendering.py [-h] [--num_paths NUM_PATHS]
-                           [--max_width MAX_WIDTH] [--use_lpips_loss]
+                           [--max_width MAX_WIDTH] [--loss LOSS]
                            [--num_iter NUM_ITER] [--use_blob]
                            target
 ```
@@ -207,10 +207,10 @@ painterly_rendering.py [-h] [--num_paths NUM_PATHS]
 e.g.,
 
 ```
-python painterly_rendering.py imgs/fallingwater.jpg --num_paths 2048 --max_width 4.0 --use_lpips_loss
+python painterly_rendering.py imgs/fallingwater.jpg --num_paths 2048 --max_width 4.0 --loss lpips
 ```
 
-Note: `--use_lpips_loss` uses PIQ’s `LPIPS` implementation under the hood. Ensure `piq` is installed in your environment (`pip install piq`). Inputs are kept in [0,1] and internally normalized to [-1,1] for PIQ.
+Use `--loss` to choose the objective (`mse`, `l1`, `lpips`, `msssim`, `dists`, `perceptual-balanced`). `--loss lpips` leverages PIQ’s LPIPS implementation; install with `pip install piq`. Inputs stay in [0,1] and are internally normalized to [-1,1] for PIQ. The legacy flag `--use_lpips_loss` still maps to LPIPS but is kept only for backward compatibility.
 
 Image vectorization
 

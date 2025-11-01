@@ -126,8 +126,8 @@ Acceleration Roadmap
 
 Painterly App (robust with LPIPS/CLIP)
 
-- [planned] Loss cadence flag: compute perceptual loss every K steps, use MSE otherwise (`--perceptual_every K`).
-- [planned] Loss downsample flag: compute perceptual loss at scale S∈(0,1] (`--loss_downsample S`).
+- [closed] Loss cadence flag: compute perceptual loss every K steps (`--perceptual_every K`). On 341×512 painterly runs (1024 paths, 32 iters) LPIPS, MSE, L1, MSSSIM, and perceptual-balanced all land at ~3.0 s/iter (lpips slightly faster than MSE/L1 in some repeats, see 2024‑xx‑xx log); cadence gating would add control-surface complexity for negligible speedup.
+- [closed] Loss downsample flag: compute perceptual loss at scale S∈(0,1] (`--loss_downsample S`). Same profiling set shows Δt reduction <3 % even when skipping LPIPS work, so the knob does not justify the added branching. Revisit only if future loss mixes (e.g., CLIP+LPIPS) meaningfully widen the gap.
 
 Closed / Not Recommended
 

@@ -1,9 +1,9 @@
 """
 Scream: python painterly_rendering.py imgs/scream.jpg --num_paths 2048 --max_width 4.0
 Fallingwater: python painterly_rendering.py imgs/fallingwater.jpg --num_paths 2048 --max_width 4.0
-Fallingwater: python painterly_rendering.py imgs/fallingwater.jpg --num_paths 2048 --max_width 4.0 --use_lpips_loss
+Fallingwater LPIPS: python painterly_rendering.py imgs/fallingwater.jpg --num_paths 2048 --max_width 4.0 --loss lpips
 Baboon: python painterly_rendering.py imgs/baboon.png --num_paths 1024 --max_width 4.0 --num_iter 250
-Baboon Lpips: python painterly_rendering.py imgs/baboon.png --num_paths 1024 --max_width 4.0 --num_iter 500 --use_lpips_loss
+Baboon perceptual: python painterly_rendering.py imgs/baboon.png --num_paths 1024 --max_width 4.0 --num_iter 500 --loss perceptual-balanced
 Kitty: python painterly_rendering.py imgs/kitty.jpg --num_paths 1024 --use_blob
 """
 import argparse
