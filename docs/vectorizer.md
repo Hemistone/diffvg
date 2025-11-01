@@ -33,16 +33,11 @@ existing rendering pipeline.
    and `VectorDoc`, plus the `vectorize` entry point (initial stub).
 2. **Core Sketch Pipeline Modules** – CPU-first implementations for edges, tone, residual, strokes, and Bézier fitting were added,
    along with integration inside `api.vectorize`.
+3. **Renderer Adapters & Pipeline Script** – `vectorizer/adapters.py` converts `VectorDoc` into diffvg scenes, `vectorizer/pipeline.py`
+   provides a `vectorize_then_render` helper, and `apps/vectorize_then_refine.py` offers an end-to-end CLI for CPU validation.
 
 ## Remaining Tasks
 The next stages focus on bridging the vectorizer output to diffvg renderers and establishing automated tests.
-
-### 3. Renderer Adapter & Pipeline Script
-- Implement `vectorizer/adapters.py` utilities to convert a `VectorDoc` into diffvg `Shape`/`ShapeGroup` objects (and optionally the
-  reverse).
-- Provide a convenience pipeline (e.g., `pydiffvg/vectorizer/pipeline.py`) that runs `vectorize` and invokes a selected backend.
-- Add an example script (`apps/vectorize_then_refine.py`) that vectorizes an image, saves an SVG, and renders via the baseline or
-  splat backend. Validate on CPU (`DIFFVG_CUDA=0`).
 
 ### 4. Tests & CI Hooks
 - Create CPU-only regression tests (e.g., `tests/test_vectorizer.py`) that check stroke counts, average scores, or structural

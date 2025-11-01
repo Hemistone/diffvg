@@ -158,9 +158,14 @@ def save_svg(
         if shape_group.fill_color is not None:
             if isinstance(shape_group.fill_color, pydiffvg.LinearGradient):
                 shape_node.set('fill', 'url(#shape_{}_fill)'.format(i))
+            elif isinstance(shape_group.fill_color, pydiffvg.Paint):
+                c = shape_group.fill_color.to_tensor().data.cpu().numpy()
+                shape_node.set('fill', 'rgb({}, {}, {})'.format(
+                    int(255 * c[0]), int(255 * c[1]), int(255 * c[2])))
+                shape_node.set('opacity', str(c[3]))
             else:
                 c = shape_group.fill_color.data.cpu().numpy()
-                shape_node.set('fill', 'rgb({}, {}, {})'.format(\
+                shape_node.set('fill', 'rgb({}, {}, {})'.format(
                     int(255 * c[0]), int(255 * c[1]), int(255 * c[2])))
                 shape_node.set('opacity', str(c[3]))
         else:
@@ -168,9 +173,14 @@ def save_svg(
         if shape_group.stroke_color is not None:
             if isinstance(shape_group.stroke_color, pydiffvg.LinearGradient):
                 shape_node.set('stroke', 'url(#shape_{}_stroke)'.format(i))
+            elif isinstance(shape_group.stroke_color, pydiffvg.Paint):
+                c = shape_group.stroke_color.to_tensor().data.cpu().numpy()
+                shape_node.set('stroke', 'rgb({}, {}, {})'.format(
+                    int(255 * c[0]), int(255 * c[1]), int(255 * c[2])))
+                shape_node.set('stroke-opacity', str(c[3]))
             else:
                 c = shape_group.stroke_color.data.cpu().numpy()
-                shape_node.set('stroke', 'rgb({}, {}, {})'.format(\
+                shape_node.set('stroke', 'rgb({}, {}, {})'.format(
                     int(255 * c[0]), int(255 * c[1]), int(255 * c[2])))
                 shape_node.set('stroke-opacity', str(c[3]))
             shape_node.set('stroke-linecap', 'round')

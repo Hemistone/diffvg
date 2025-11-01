@@ -17,7 +17,7 @@ from .pixel_filter import *  # noqa: F401,F403
 from .color import *  # noqa: F401,F403
 from .optimize_svg import *  # noqa: F401,F403
 from .optimize import SvgOptimizationDriver, SvgParserMixin, SvgWriterMixin
-from .vectorizer import VectorDoc, VectorLayer, vectorize
+from .vectorizer import VectorDoc, VectorLayer, vectorize, vectorize_then_render
 
 from .render_pytorch import RenderFunction, OutputType, set_print_timing
 from .image import imwrite
@@ -37,7 +37,7 @@ __all__ = (
     + list(_color.__all__)
     + list(_optimize_svg.__all__)
     + list(_optimize.__all__)
-    + ["VectorDoc", "VectorLayer", "vectorize"]
+    + ["VectorDoc", "VectorLayer", "vectorize", "vectorize_then_render"]
     + [
         "RenderFunction",
         "OutputType",

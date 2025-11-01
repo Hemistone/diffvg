@@ -30,7 +30,7 @@ def serialize_scene(
     from .device import get_device
     from .pixel_filter import PixelFilter
     from .shape import Circle, Ellipse, Path, Polygon, Rect
-    from .color import LinearGradient, RadialGradient
+    from .color import LinearGradient, RadialGradient, Paint
 
     target_device: torch.device
     if keep_on_device:
@@ -130,6 +130,11 @@ def serialize_scene(
             assert shape_group.fill_color.is_contiguous()
             args.append(diffvg.ColorType.constant)
             args.append(_move_tensor(shape_group.fill_color))
+        elif isinstance(shape_group.fill_color, Paint):
+            tensor = shape_group.fill_color.to_tensor()
+            assert tensor.is_contiguous()
+            args.append(diffvg.ColorType.constant)
+            args.append(_move_tensor(tensor))
         elif isinstance(shape_group.fill_color, LinearGradient):
             assert shape_group.fill_color.begin.is_contiguous()
             assert shape_group.fill_color.end.is_contiguous()
@@ -172,6 +177,11 @@ def serialize_scene(
             assert shape_group.stroke_color.is_contiguous()
             args.append(diffvg.ColorType.constant)
             args.append(_move_tensor(shape_group.stroke_color))
+        elif isinstance(shape_group.stroke_color, Paint):
+            tensor = shape_group.stroke_color.to_tensor()
+            assert tensor.is_contiguous()
+            args.append(diffvg.ColorType.constant)
+            args.append(_move_tensor(tensor))
         elif isinstance(shape_group.stroke_color, LinearGradient):
             assert shape_group.stroke_color.begin.is_contiguous()
             assert shape_group.stroke_color.end.is_contiguous()
