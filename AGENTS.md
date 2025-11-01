@@ -28,6 +28,8 @@ This repository is a modernized fork of https://github.com/BachiLi/diffvg aimed 
 - Smoke tests live in `apps/` (e.g., `python apps/svg_parse_test.py`, `python apps/test_eval_positions.py`).
 - Run a couple of examples after building to validate both CPU/CUDA paths.
 - If adding features, prefer small, runnable examples under `apps/` mirroring existing patterns.
+- For vectorizer-related work, consult `docs/vectorizer.md` for the current roadmap, module ownership, and CPU verification
+  commands before starting a task.
 
 ## Commit & Pull Request Guidelines
 - Commits: imperative, scoped messages (e.g., `build: set default CUDA arch to 89`, `fix(pydiffvg): handle empty path list`).
