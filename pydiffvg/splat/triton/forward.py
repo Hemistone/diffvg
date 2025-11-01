@@ -180,7 +180,7 @@ def composite_gaussians_full_triton(
         except Exception:
             return default
     block = _env_int("DIFFVG_SPLAT_BLOCK", 4096)
-    warps = _env_int("DIFFVG_SPLAT_WARPS", 4)
+    warps = _env_int("DIFFVG_SPLAT_WARPS", 8)
     stages = _env_int("DIFFVG_SPLAT_STAGES", 2)
     grid = (triton.cdiv(Npix, block),)
 

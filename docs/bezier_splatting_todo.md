@@ -83,7 +83,7 @@ Phases
 - [closed] In‑kernel S‑chunking (per tile): tried staging CSR slices in fixed chunks (env flag now removed). On painterly 341×512 with 1024 paths × 64 iter the per-iter time exploded (3m22s → 1m21s) due to register pressure and spills. Reverted to the per-splat loop; any revisit must start from fresh profiling (likely ≤8-splat staging with cooperative groups).
 - [planned] Per‑pixel backward variant: one program per pixel with small loops over tile splats (forward prefix + reverse suffix); block‑reduce then atomically add once per splat. Often higher occupancy; evaluate after fused per‑tile kernel.
 - [todo] Early culling inside tile: compute a cheap mask for negligible contribution (e.g., (qx²+qy²) < r²) to skip work on empty pixels per splat.
-- [todo] Launch tuning after refactors: pick per‑arch presets (e.g., BLOCK≈2048–4096, WARPS≈8, STAGES≈3 on SM89) and expose knob docs.
+- [todo] Launch tuning after refactors: pick per‑arch presets (e.g., BLOCK≈2048–4096, WARPS≈8, STAGES≈3 on SM89) and expose knob docs. (Use `scripts/tune_splat_launch.py`; edit the `CONFIG` block inside to choose targets/sweeps and record the fastest combos per workload.)
 - [todo] Optional CUDA (C++) kernels after Triton parity (keep Python entry stable).
 
 Immediate Validation Queue
