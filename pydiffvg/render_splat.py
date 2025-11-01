@@ -150,7 +150,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
             )
         # Default-on tiled diff to match tiler semantics under grad
         # Save CSR + SoA so Triton backward can run even if forward used Torch
-        if ctx is not None and _triton.is_available() and device.type == "cuda":
+        if ctx is not None and _triton.is_available() and device.type == "cuda" and not _triton.env_forces_python():
             try:
                 tile_ptr, tile_idx, tiles_x, tiles_y = _triton._build_tile_csr(
                     mu.detach(), theta.detach(), sigma_x.detach(), sigma_y.detach(),
@@ -221,7 +221,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                 if _debug_enabled():
                     _trace(f"forward save skipped: {type(_exc).__name__}")
         # Prefer Triton tiled compositor when available (strict only if explicitly requested)
-        if _triton.is_available() and device.type == "cuda":
+        if _triton.is_available() and device.type == "cuda" and not _triton.env_forces_python():
             try:
                 return _triton.composite_gaussians_tiled_triton(
                     mu,
@@ -255,7 +255,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
             tile_size,
         )
     # Prefer Triton full-frame compositor when available (strict only if explicitly requested)
-    if _triton.is_available() and device.type == "cuda":
+    if _triton.is_available() and device.type == "cuda" and not _triton.env_forces_python():
         try:
             gchunk = int(os.environ.get("DIFFVG_SPLAT_CHUNK", "256").strip() or "256")
         except Exception:
@@ -449,10 +449,35 @@ def _render_backward(
             chunk = int(chunk_env)
         except Exception:
             chunk = 128
-        image = _composite_gaussians_full_ckpt(
-            mu, theta, sigma_x, sigma_y, color_rgb, opacity,
-            request.width, request.height, device, dtype, chunk=chunk
-        )
+        tile_size = int(request.config.tile)
+        if tile_size > 0:
+            image = _composite_gaussians_tiled_diff(
+                mu,
+                theta,
+                sigma_x,
+                sigma_y,
+                color_rgb,
+                opacity,
+                request.width,
+                request.height,
+                device,
+                dtype,
+                tile_size,
+            )
+        else:
+            image = _composite_gaussians_full_ckpt(
+                mu,
+                theta,
+                sigma_x,
+                sigma_y,
+                color_rgb,
+                opacity,
+                request.width,
+                request.height,
+                device,
+                dtype,
+                chunk=chunk,
+            )
         grad_img_cast = grad_img.to(device=image.device, dtype=image.dtype).contiguous()
         loss = torch.sum(image * grad_img_cast)
     if _debug_enabled():
@@ -651,7 +676,7 @@ class SplatRenderFunction(torch.autograd.Function):
         # Triton backward (experimental, color-only v0) if state saved and requested
         try:
             saved = getattr(ctx, "splat_saved", None)
-            if saved is not None and _triton.is_available():
+            if saved is not None and _triton.is_available() and not _triton.env_forces_python():
                 mu = saved["mu"]; theta = saved["theta"]; sigma_x = saved["sigma_x"]; sigma_y = saved["sigma_y"]
                 color_rgb = saved["color_rgb"]; opacity = saved["opacity"]
                 tile_ptr = saved["tile_ptr"]; tile_idx = saved["tile_idx"]

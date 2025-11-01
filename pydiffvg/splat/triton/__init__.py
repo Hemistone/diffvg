@@ -3,6 +3,7 @@ from __future__ import annotations
 from .runtime import HAS_TRITON, is_available, tl, triton  # re-export for callers needing the runtime handles
 from .forward import (
     env_wants_triton,
+    env_forces_python,
     composite_gaussians_full_triton,
     composite_gaussians_tiled_triton,
     _build_tile_csr,
@@ -21,6 +22,7 @@ __all__ = [
     "triton",
     "tl",
     "env_wants_triton",
+    "env_forces_python",
     "composite_gaussians_full_triton",
     "composite_gaussians_tiled_triton",
     "backward_tiled_color_triton",

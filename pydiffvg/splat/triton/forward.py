@@ -229,8 +229,16 @@ def composite_gaussians_full_triton(
     return torch.cat([out_rgb, out_a.unsqueeze(-1)], dim=-1)
 
 
+def _impl_mode() -> str:
+    return os.environ.get("DIFFVG_SPLAT_IMPL", "").strip().lower()
+
+
 def env_wants_triton() -> bool:
-    return (os.environ.get("DIFFVG_SPLAT_IMPL", "").strip().lower() == "triton")
+    return _impl_mode() == "triton"
+
+
+def env_forces_python() -> bool:
+    return _impl_mode() in {"python", "torch", "fallback"}
 
 
 @triton.jit
@@ -504,6 +512,7 @@ def composite_gaussians_tiled_triton(
 
 __all__ = [
     "env_wants_triton",
+    "env_forces_python",
     "composite_gaussians_full_triton",
     "composite_gaussians_tiled_triton",
     "_build_tile_csr",

@@ -24,7 +24,7 @@ Phases
 - [done] Backend registry: `pydiffvg/backends/registry.py` (internal), register baseline + splat
 - [done] Define backend_config (K, R, ρ, tile size, depth policy), defaults + env overrides
 - [done] Unified tracing via `DIFFVG_SPLAT_TRACE` for parity/instrumentation
-- [done] Simplified runtime knobs: `DIFFVG_SPLAT_IMPL=triton` enforces the Triton path (strict mode), shared chunk sizing via `DIFFVG_SPLAT_CHUNK`, and `DIFFVG_DEVICE=cpu|cuda[:index]` overrides the default CUDA device selection.
+- [done] Simplified runtime knobs: `DIFFVG_SPLAT_IMPL=triton` enforces the Triton path (strict mode), `DIFFVG_SPLAT_IMPL=python` forces the Torch fallback, shared chunk sizing via `DIFFVG_SPLAT_CHUNK`, and `DIFFVG_DEVICE=cpu|cuda[:index]` overrides the default CUDA device.
 
 1a) Forward (Open Strokes)
 
@@ -44,7 +44,7 @@ Phases
 - [note] For correctness parity and to avoid under‑coverage on some scenes, the current default temporarily uses stroke alpha directly (spacing normalization disabled). Re‑enable behind a flag after Triton backward lands.
 - [done] Centered θ at samples. Use central differences between neighbor sample positions for interior points; endpoints fall back to analytic tangents. This removes polyline-like kinks in orientation.
 - [todo] Round caps/joins approximation. Add endpoint/turn handling to match baseline round caps/joins using a small cap fan or analytic ellipse aligned with the normal; keep minimal extra splats.
-- [todo] Keep tiling differentiable. Rework tiled compositor to use additive accumulation (e.g., scatter/add or blockwise writes) so tiling can remain enabled under autograd; keep the current full-frame fallback as a debug path.
+- [closed] Keep tiling differentiable. Torch fallback now reuses the tiled compositor (`_composite_gaussians_tiled_diff`) during autograd so gradient-only runs avoid the full-frame recompute; retained for debuggability only (no impact on Triton performance).
 - [planned] Flat-top radial profile with a 2-Gaussian mixture to approximate a box interior and ~1 px edge rolloff; remove soft halo while preserving differentiability. Guarded by a config flag.
 - [planned] Along-curve anisotropy knob: decouple σx from spacing with `σx = a·Δs`, `a ∈ (0,1]`, and fold into α re-normalization so coverage remains density-invariant.
 - [planned] Cap/edge calibration to baseline AA: match endpoint caps and side-edge sharpness by aligning the edge-spread; optionally add a minimal cap fan or analytic end-ellipse.
