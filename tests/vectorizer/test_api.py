@@ -2,22 +2,12 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-API_PATH = ROOT / "pydiffvg" / "vectorizer" / "api.py"
+from .utils import load_vectorizer_module
 
-spec = importlib.util.spec_from_file_location("pydiffvg_vectorizer_api", API_PATH)
-if spec is None or spec.loader is None:  # pragma: no cover - defensive
-    raise RuntimeError("Unable to load pydiffvg.vectorizer.api module for testing")
-vectorizer_api = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = vectorizer_api
-spec.loader.exec_module(vectorizer_api)
+vectorizer_api = load_vectorizer_module("api")
 
 VectorDoc = vectorizer_api.VectorDoc
 vectorize = vectorizer_api.vectorize
