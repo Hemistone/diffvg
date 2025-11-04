@@ -8,6 +8,7 @@ Kitty: python painterly_rendering.py imgs/kitty.jpg --num_paths 1024 --use_blob
 """
 import argparse
 import math
+import os
 import random
 from pathlib import Path
 
@@ -139,19 +140,28 @@ def main(args):
         results_root=Path("results") / "painterly_rendering",
     )
     device_str = str(pydiffvg.get_device())
+    config_items = {
+        "device": device_str,
+        "target": str(target_path),
+        "canvas": f"{canvas_width}x{canvas_height}",
+        "paths": num_paths,
+        "iterations": args.num_iter,
+        "max_width": max_width,
+        "loss": loss_name,
+        "blob_mode": args.use_blob,
+        "run_dir": run.results_dir,
+    }
+    if pydiffvg.get_backend() == "splat":
+        raw_thresh = os.environ.get("DIFFVG_SPLAT_TILE_THRESH")
+        if raw_thresh is None or raw_thresh.strip() == "":
+            tile_thresh_display = "1e-4 (default)"
+        else:
+            tile_thresh_display = raw_thresh.strip()
+        config_items["splat_tile_thresh"] = tile_thresh_display
+
     log_run_configuration(
         "painterly_rendering",
-        {
-            "device": device_str,
-            "target": str(target_path),
-            "canvas": f"{canvas_width}x{canvas_height}",
-            "paths": num_paths,
-            "iterations": args.num_iter,
-            "max_width": max_width,
-            "loss": loss_name,
-            "blob_mode": args.use_blob,
-            "run_dir": run.results_dir,
-        },
+        config_items,
     )
 
     random.seed(1234)

@@ -139,7 +139,7 @@ def main() -> int:
         stroke_width_refs.append(None)
 
     tile_size = int(os.environ.get("DIFFVG_SPLAT_TILE", "32"))
-    tile_ptr, tile_idx, tiles_x, tiles_y = _triton._build_tile_csr(
+    tile_ptr, tile_idx, tile_bounds, tiles_x, tiles_y = _triton._build_tile_csr(
         mu, theta, sigma_x, sigma_y, width, height, tile_size
     )
 
@@ -152,6 +152,7 @@ def main() -> int:
         "opacity": opacity,
         "tile_ptr": tile_ptr,
         "tile_idx": tile_idx,
+        "tile_bounds": tile_bounds,
         "tiles_x": tiles_x,
         "tiles_y": tiles_y,
         "tile_size": tile_size,

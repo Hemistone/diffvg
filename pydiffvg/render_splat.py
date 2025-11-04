@@ -152,7 +152,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
         # Save CSR + SoA so Triton backward can run even if forward used Torch
         if ctx is not None and _triton.is_available() and device.type == "cuda" and not _triton.env_forces_python():
             try:
-                tile_ptr, tile_idx, tiles_x, tiles_y = _triton._build_tile_csr(
+                tile_ptr, tile_idx, tile_bounds, tiles_x, tiles_y = _triton._build_tile_csr(
                     mu.detach(), theta.detach(), sigma_x.detach(), sigma_y.detach(),
                     request.width, request.height, tile_size,
                 )
@@ -165,6 +165,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                     "opacity": opacity,
                     "tile_ptr": tile_ptr,
                     "tile_idx": tile_idx,
+                    "tile_bounds": tile_bounds,
                     "tiles_x": tiles_x,
                     "tiles_y": tiles_y,
                     "tile_size": tile_size,
@@ -265,7 +266,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
             if ctx is not None:
                 tile_size = int(request.config.tile)
                 if tile_size > 0:
-                    tile_ptr, tile_idx, tiles_x, tiles_y = _triton._build_tile_csr(
+                    tile_ptr, tile_idx, tile_bounds, tiles_x, tiles_y = _triton._build_tile_csr(
                         mu, theta, sigma_x, sigma_y, request.width, request.height, tile_size
                     )
                     # Per-spec sample counts and references in same order as 'batches'
@@ -301,6 +302,7 @@ def _render_forward(request: RenderRequest, ctx: Optional[object] = None) -> tor
                         "opacity": opacity,
                         "tile_ptr": tile_ptr,
                         "tile_idx": tile_idx,
+                        "tile_bounds": tile_bounds,
                         "tiles_x": tiles_x,
                         "tiles_y": tiles_y,
                         "tile_size": tile_size,
@@ -681,9 +683,16 @@ class SplatRenderFunction(torch.autograd.Function):
                 color_rgb = saved["color_rgb"]; opacity = saved["opacity"]
                 tile_ptr = saved["tile_ptr"]; tile_idx = saved["tile_idx"]
                 width = int(saved["width"]); height = int(saved["height"]); tile_size = int(saved["tile_size"])
+                tile_bounds = saved.get("tile_bounds")
+                if tile_bounds is None:
+                    full = torch.zeros((tile_idx.shape[0], 4), dtype=torch.int16, device=tile_idx.device)
+                    full[:, 1] = tile_size - 1
+                    full[:, 3] = tile_size - 1
+                    tile_bounds = full
                 dcolor, dalpha, dmu_x, dmu_y, dtheta, disx, disy = _triton.backward_tiled_full_triton(
                     mu, theta, sigma_x, sigma_y, color_rgb, opacity,
-                    tile_ptr, tile_idx, width, height, tile_size,
+                    tile_ptr, tile_idx, tile_bounds,
+                    width, height, tile_size,
                     grad_img,
                 )
                 triton_total = (
@@ -703,6 +712,28 @@ class SplatRenderFunction(torch.autograd.Function):
                         raise RuntimeError("Triton backward produced non-finite or near-zero grads under strict mode")
                     if _debug_enabled():
                         _trace("render_backward detected near-zero or non-finite Triton grads; falling back to python reference")
+                    fallback_tile_ptr = tile_ptr
+                    fallback_tile_idx = tile_idx
+                    if tile_bounds is not None:
+                        keep_mask = (tile_bounds[:, 1] >= tile_bounds[:, 0]) & (tile_bounds[:, 3] >= tile_bounds[:, 2])
+                        if not torch.all(keep_mask):
+                            fallback_tile_idx = tile_idx[keep_mask]
+                            tile_counts = tile_ptr[1:] - tile_ptr[:-1]
+                            if tile_counts.numel() > 0:
+                                tile_ids = torch.repeat_interleave(
+                                    torch.arange(tile_counts.shape[0], device=tile_ptr.device, dtype=torch.int64),
+                                    tile_counts.to(torch.int64),
+                                )
+                                kept_counts = torch.zeros_like(tile_counts)
+                                kept_counts.index_add_(0, tile_ids, keep_mask.to(tile_counts.dtype))
+                                fallback_tile_ptr = torch.empty_like(tile_ptr)
+                                fallback_tile_ptr[0] = 0
+                                if kept_counts.numel() > 0:
+                                    fallback_tile_ptr[1:] = torch.cumsum(kept_counts.to(torch.int64), dim=0).to(tile_ptr.dtype)
+                                else:
+                                    fallback_tile_ptr[1:] = 0
+                            else:
+                                fallback_tile_ptr = tile_ptr
                     (
                         dcolor,
                         dalpha,
@@ -713,7 +744,8 @@ class SplatRenderFunction(torch.autograd.Function):
                         disy,
                     ) = _backward_tiled_full_python(
                         mu, theta, sigma_x, sigma_y, color_rgb, opacity,
-                        tile_ptr, tile_idx, width, height, tile_size,
+                        fallback_tile_ptr, fallback_tile_idx,
+                        width, height, tile_size,
                         grad_img,
                     )
 

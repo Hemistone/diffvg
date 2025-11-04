@@ -82,7 +82,7 @@ Phases
 - [done] Env knobs for backward launch: `DIFFVG_SPLAT_BWD_WARPS`, `DIFFVG_SPLAT_BWD_STAGES`.
 - [closed] In‑kernel S‑chunking (per tile): tried staging CSR slices in fixed chunks (env flag now removed). On painterly 341×512 with 1024 paths × 64 iter the per-iter time exploded (3m22s → 1m21s) due to register pressure and spills. Reverted to the per-splat loop; any revisit must start from fresh profiling (likely ≤8-splat staging with cooperative groups).
 - [planned] Per‑pixel backward variant: one program per pixel with small loops over tile splats (forward prefix + reverse suffix); block‑reduce then atomically add once per splat. Often higher occupancy; evaluate after fused per‑tile kernel.
-- [todo] Early culling inside tile: compute a cheap mask for negligible contribution (e.g., (qx²+qy²) < r²) to skip work on empty pixels per splat.
+- [done] Early culling inside tile: CSR now records per-splat tile bounds; forward/backward skip entries when bounds collapse. Controlled via a single knob `DIFFVG_SPLAT_TILE_THRESH` (default 1e-4; set 0 to disable and match legacy behavior).
 - [todo] Launch tuning after refactors: pick per‑arch presets (e.g., BLOCK≈2048–4096, WARPS≈8, STAGES≈3 on SM89) and expose knob docs. (Use `scripts/tune_splat_launch.py`; edit the `CONFIG` block inside to choose targets/sweeps and record the fastest combos per workload.)
 - [todo] Optional CUDA (C++) kernels after Triton parity (keep Python entry stable).
 

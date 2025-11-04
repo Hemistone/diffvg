@@ -57,6 +57,9 @@ def build_case(seed: int, device: torch.device, n_gaussians: int) -> Tuple[torch
         tile_size,
         grad_img,
     )
+    tile_bounds = torch.zeros((tile_idx.shape[0], 4), dtype=torch.int16, device=device)
+    tile_bounds[:, 1] = tile_size - 1
+    tile_bounds[:, 3] = tile_size - 1
 
 
 def fmt_tensor(name: str, tensor: torch.Tensor) -> str:
@@ -145,6 +148,7 @@ def main() -> int:
         opacity,
         tile_ptr,
         tile_idx,
+        tile_bounds,
         width,
         height,
         tile_size,

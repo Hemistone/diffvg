@@ -112,6 +112,8 @@ def _backward_tiled_color_kernel(
     opacity_ptr,
     grad_r_ptr, grad_g_ptr, grad_b_ptr, grad_a_ptr,
     tile_ptr_ptr, tile_idx_ptr,
+    tile_min_x_ptr, tile_max_x_ptr,
+    tile_min_y_ptr, tile_max_y_ptr,
     W: tl.constexpr,
     H: tl.constexpr,
     tiles_x: tl.constexpr,
@@ -156,36 +158,44 @@ def _backward_tiled_color_kernel(
         isx = tl.load(invsx_ptr + gi)
         isy = tl.load(invsy_ptr + gi)
         o   = tl.load(opacity_ptr + gi)
+        min_x = tl.load(tile_min_x_ptr + i).to(tl.int32)
+        max_x = tl.load(tile_max_x_ptr + i).to(tl.int32)
+        min_y = tl.load(tile_min_y_ptr + i).to(tl.int32)
+        max_y = tl.load(tile_max_y_ptr + i).to(tl.int32)
+        row_mask = (oy >= min_y) & (oy <= max_y)
+        col_mask = (ox >= min_x) & (ox <= max_x)
+        active = row_mask[:, None] & col_mask[None, :] & mask
+        active_count = tl.sum(tl.sum(active.to(tl.int32), axis=1), axis=0)
+        if active_count != 0:
+            dx = gx - mu_x
+            dy = gy - mu_y
+            lx = cth * dx + sth * dy
+            ly = -sth * dx + cth * dy
+            txx = lx * isx
+            tyy = ly * isy
+            expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
+            ai_full = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+            ai = tl.where(active, ai_full, 0.0)
 
-        dx = gx - mu_x
-        dy = gy - mu_y
-        lx = cth * dx + sth * dy
-        ly = -sth * dx + cth * dy
-        txx = lx * isx
-        tyy = ly * isy
-        expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
-        ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+            wprefix = T * ai
+            m_r = tl.where(active, gr * wprefix, 0.0)
+            m_g = tl.where(active, gg * wprefix, 0.0)
+            m_b = tl.where(active, gb * wprefix, 0.0)
+            # Reduce over tile: sum rows then columns for numerical stability
+            val_r = tl.sum(tl.sum(m_r, axis=1), axis=0)
+            val_g = tl.sum(tl.sum(m_g, axis=1), axis=0)
+            val_b = tl.sum(tl.sum(m_b, axis=1), axis=0)
+            tl.atomic_add(dcol_r_ptr + gi, val_r)
+            tl.atomic_add(dcol_g_ptr + gi, val_g)
+            tl.atomic_add(dcol_b_ptr + gi, val_b)
 
-        wprefix = T * ai
-        m_r = tl.where(mask, gr * wprefix, 0.0)
-        m_g = tl.where(mask, gg * wprefix, 0.0)
-        m_b = tl.where(mask, gb * wprefix, 0.0)
-        # Reduce over tile: sum rows then columns for numerical stability
-        val_r = tl.sum(tl.sum(m_r, axis=1), axis=0)
-        val_g = tl.sum(tl.sum(m_g, axis=1), axis=0)
-        val_b = tl.sum(tl.sum(m_b, axis=1), axis=0)
-        tl.atomic_add(dcol_r_ptr + gi, val_r)
-        tl.atomic_add(dcol_g_ptr + gi, val_g)
-        tl.atomic_add(dcol_b_ptr + gi, val_b)
+            eps = 1e-6
+            g_over_o = tl.where(o > eps, ai / o, 0.0)
+            m_a = tl.where(active, ga * T * g_over_o, 0.0)
+            val_a = tl.sum(tl.sum(m_a, axis=0), axis=0)
+            tl.atomic_add(dopa_ptr + gi, val_a)
 
-        eps = 1e-6
-        g_over_o = tl.where(o > eps, ai / o, 0.0)
-        m_a = tl.where(mask, ga * T * g_over_o, 0.0)
-        val_a = tl.sum(tl.sum(m_a, axis=0), axis=0)
-        tl.atomic_add(dopa_ptr + gi, val_a)
-
-        T = T * (1.0 - ai)
-
+            T = T * (1.0 - ai)
         i += 1
 
 
@@ -198,6 +208,7 @@ def backward_tiled_color_triton(
     opacity: torch.Tensor,
     tile_ptr: torch.Tensor,
     tile_idx: torch.Tensor,
+    tile_bounds: torch.Tensor,
     width: int,
     height: int,
     tile_size: int,
@@ -235,6 +246,10 @@ def backward_tiled_color_triton(
     tiles_x = (width + tile_size - 1) // tile_size
     grid = (int((height + tile_size - 1) // tile_size), int(tiles_x))
     BLOCK = int(tile_size)
+    tile_min_x = tile_bounds[:, 0].contiguous()
+    tile_max_x = tile_bounds[:, 1].contiguous()
+    tile_min_y = tile_bounds[:, 2].contiguous()
+    tile_max_y = tile_bounds[:, 3].contiguous()
     _backward_tiled_color_kernel[grid](
         dcol_r, dcol_g, dcol_b, dopa,
         mu[:, 0].contiguous(), mu[:, 1].contiguous(),
@@ -243,6 +258,8 @@ def backward_tiled_color_triton(
         opacity.contiguous(),
         gr.contiguous(), gg.contiguous(), gb.contiguous(), ga.contiguous(),
         tile_ptr.contiguous(), tile_idx.contiguous(),
+        tile_min_x, tile_max_x,
+        tile_min_y, tile_max_y,
         width, height, tiles_x, tile_size,
         BLOCK_H=BLOCK, BLOCK_W=BLOCK,
     )
@@ -261,6 +278,8 @@ def _backward_tiled_full_kernel(
     col_r_ptr, col_g_ptr, col_b_ptr,
     grad_r_ptr, grad_g_ptr, grad_b_ptr, grad_a_ptr,
     tile_ptr_ptr, tile_idx_ptr,
+    tile_min_x_ptr, tile_max_x_ptr,
+    tile_min_y_ptr, tile_max_y_ptr,
     capture_T_ptr, capture_ai_ptr, capture_contrib_ptr, capture_grad_ai_ptr,
     W: tl.constexpr,
     H: tl.constexpr,
@@ -293,8 +312,6 @@ def _backward_tiled_full_kernel(
     gb = tl.load(grad_b_ptr + rlin, mask=mask, other=0.0)
     ga = tl.load(grad_a_ptr + rlin, mask=mask, other=0.0)
 
-    mask_f32 = mask.to(tl.float32)
-
     # Pass 1: accumulate log-transmittance per pixel to avoid underflow
     LOG_EPS = 1e-6
     log_Ttot = tl.zeros((BLOCK_H, BLOCK_W), dtype=tl.float32)
@@ -308,17 +325,27 @@ def _backward_tiled_full_kernel(
         isx = tl.load(invsx_ptr + gi)
         isy = tl.load(invsy_ptr + gi)
         o   = tl.load(opacity_ptr + gi)
-        dx = gx - mu_x
-        dy = gy - mu_y
-        lx = cth * dx + sth * dy
-        ly = -sth * dx + cth * dy
-        txx = lx * isx
-        tyy = ly * isy
-        expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
-        ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
-        one_minus_ai = tl.maximum(1.0 - ai, LOG_EPS)
-        log_contrib = tl.log(one_minus_ai)
-        log_Ttot = log_Ttot + tl.where(mask, log_contrib, 0.0)
+        min_x = tl.load(tile_min_x_ptr + j).to(tl.int32)
+        max_x = tl.load(tile_max_x_ptr + j).to(tl.int32)
+        min_y = tl.load(tile_min_y_ptr + j).to(tl.int32)
+        max_y = tl.load(tile_max_y_ptr + j).to(tl.int32)
+        row_mask = (oy >= min_y) & (oy <= max_y)
+        col_mask = (ox >= min_x) & (ox <= max_x)
+        active = row_mask[:, None] & col_mask[None, :] & mask
+        active_count = tl.sum(tl.sum(active.to(tl.int32), axis=1), axis=0)
+        if active_count != 0:
+            dx = gx - mu_x
+            dy = gy - mu_y
+            lx = cth * dx + sth * dy
+            ly = -sth * dx + cth * dy
+            txx = lx * isx
+            tyy = ly * isy
+            expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
+            ai_full = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+            ai = tl.where(active, ai_full, 0.0)
+            one_minus_ai = tl.maximum(1.0 - ai, LOG_EPS)
+            log_contrib = tl.log(one_minus_ai)
+            log_Ttot = log_Ttot + tl.where(mask, log_contrib, 0.0)
         j += 1
 
     total_product = tl.exp(log_Ttot)
@@ -338,6 +365,15 @@ def _backward_tiled_full_kernel(
         cr = tl.load(col_r_ptr + gi)
         cg = tl.load(col_g_ptr + gi)
         cb = tl.load(col_b_ptr + gi)
+        min_x = tl.load(tile_min_x_ptr + j).to(tl.int32)
+        max_x = tl.load(tile_max_x_ptr + j).to(tl.int32)
+        min_y = tl.load(tile_min_y_ptr + j).to(tl.int32)
+        max_y = tl.load(tile_max_y_ptr + j).to(tl.int32)
+        row_mask = (oy >= min_y) & (oy <= max_y)
+        col_mask = (ox >= min_x) & (ox <= max_x)
+        active = row_mask[:, None] & col_mask[None, :] & mask
+        active_count = tl.sum(tl.sum(active.to(tl.int32), axis=1), axis=0)
+        active = active & (active_count != 0)
 
         dx = gx - mu_x
         dy = gy - mu_y
@@ -346,8 +382,8 @@ def _backward_tiled_full_kernel(
         txx = lx * isx
         tyy = ly * isy
         expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
-        ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
-        ai = tl.where(mask, ai, 0.0)
+        ai_full = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+        ai = tl.where(active, ai_full, 0.0)
 
         one_minus_ai = tl.maximum(1.0 - ai, LOG_EPS)
         denom = tl.maximum(one_minus_ai * trans_after, LOG_EPS)
@@ -355,9 +391,9 @@ def _backward_tiled_full_kernel(
         T_i = tl.where(mask, T_i, 0.0)
 
         contrib = T_i * ai
-        m_r = tl.where(mask, gr * contrib, 0.0)
-        m_g = tl.where(mask, gg * contrib, 0.0)
-        m_b = tl.where(mask, gb * contrib, 0.0)
+        m_r = tl.where(active, gr * contrib, 0.0)
+        m_g = tl.where(active, gg * contrib, 0.0)
+        m_b = tl.where(active, gb * contrib, 0.0)
         # Reduce over 2D tile explicitly (row then col) to avoid edge cases
         val_r = tl.sum(tl.sum(m_r, axis=1), axis=0)
         val_g = tl.sum(tl.sum(m_g, axis=1), axis=0)
@@ -367,17 +403,17 @@ def _backward_tiled_full_kernel(
         tl.atomic_add(dcol_b_ptr + gi, val_b)
 
         dot_color = gr * cr + gg * cg + gb * cb
-        grad_contrib = tl.where(mask, dot_color + ga, 0.0)
+        grad_contrib = tl.where(active, dot_color + ga, 0.0)
         grad_ai = T_i * (grad_contrib - grad_trans_prev_next)
-        grad_ai = tl.where(mask, grad_ai, 0.0)
+        grad_ai = tl.where(active, grad_ai, 0.0)
         grad_trans_prev = grad_contrib * ai + grad_trans_prev_next * (1.0 - ai)
-        grad_trans_prev = tl.where(mask, grad_trans_prev, 0.0)
+        grad_trans_prev = tl.where(active, grad_trans_prev, 0.0)
         grad_trans_prev_next = grad_trans_prev
 
         pre = o * expv
         CLAMP_EPS = 1e-6
         clamp_mask = (pre > CLAMP_EPS) & (pre < 1.0 - CLAMP_EPS)
-        grad_pre = tl.where(clamp_mask & mask, grad_ai, 0.0)
+        grad_pre = tl.where(clamp_mask & active, grad_ai, 0.0)
         grad_opacity = grad_pre * expv
         val_a = tl.sum(tl.sum(grad_opacity, axis=0), axis=0)
         tl.atomic_add(dopa_ptr + gi, val_a)
@@ -398,16 +434,16 @@ def _backward_tiled_full_kernel(
         grad_mu_x = -grad_dx
         grad_mu_y = -grad_dy
 
-        m_isx = tl.where(mask, grad_isx, 0.0)
-        m_isy = tl.where(mask, grad_isy, 0.0)
+        m_isx = tl.where(active, grad_isx, 0.0)
+        m_isy = tl.where(active, grad_isy, 0.0)
         add_isx = tl.sum(tl.sum(m_isx, axis=0), axis=0)
         add_isy = tl.sum(tl.sum(m_isy, axis=0), axis=0)
         tl.atomic_add(disx_ptr + gi, add_isx)
         tl.atomic_add(disy_ptr + gi, add_isy)
 
-        m_mx = tl.where(mask, grad_mu_x, 0.0)
-        m_my = tl.where(mask, grad_mu_y, 0.0)
-        m_th = tl.where(mask, grad_theta, 0.0)
+        m_mx = tl.where(active, grad_mu_x, 0.0)
+        m_my = tl.where(active, grad_mu_y, 0.0)
+        m_th = tl.where(active, grad_theta, 0.0)
         val_mx = tl.sum(tl.sum(m_mx, axis=0), axis=0)
         val_my = tl.sum(tl.sum(m_my, axis=0), axis=0)
         val_th = tl.sum(tl.sum(m_th, axis=0), axis=0)
@@ -416,15 +452,15 @@ def _backward_tiled_full_kernel(
         tl.atomic_add(dtheta_ptr + gi, val_th)
 
         new_trans_after = trans_after * tl.maximum(one_minus_ai, LOG_EPS)
-        trans_after = tl.where(mask, new_trans_after, trans_after)
+        trans_after = tl.where(active, new_trans_after, trans_after)
 
         if CAPTURE:
             local_idx = (e - 1) - j
             base_idx = tile_id * MAX_SPLATS + local_idx
-            sum_T = tl.sum(tl.where(mask, T_i, 0.0))
-            sum_ai = tl.sum(tl.where(mask, ai, 0.0))
-            sum_contrib = tl.sum(tl.where(mask, contrib, 0.0))
-            sum_grad_ai = tl.sum(tl.where(mask, grad_ai, 0.0))
+            sum_T = tl.sum(tl.where(active, T_i, 0.0))
+            sum_ai = tl.sum(tl.where(active, ai, 0.0))
+            sum_contrib = tl.sum(tl.where(active, contrib, 0.0))
+            sum_grad_ai = tl.sum(tl.where(active, grad_ai, 0.0))
             tl.store(capture_T_ptr + base_idx, sum_T)
             tl.store(capture_ai_ptr + base_idx, sum_ai)
             tl.store(capture_contrib_ptr + base_idx, sum_contrib)
@@ -442,6 +478,7 @@ def backward_tiled_full_triton(
     opacity: torch.Tensor,
     tile_ptr: torch.Tensor,
     tile_idx: torch.Tensor,
+    tile_bounds: torch.Tensor,
     width: int,
     height: int,
     tile_size: int,
@@ -491,6 +528,10 @@ def backward_tiled_full_triton(
     tiles_y = (height + tile_size - 1) // tile_size
     grid = (int(tiles_y), int(tiles_x))
     BLOCK = int(tile_size)
+    tile_min_x = tile_bounds[:, 0].contiguous()
+    tile_max_x = tile_bounds[:, 1].contiguous()
+    tile_min_y = tile_bounds[:, 2].contiguous()
+    tile_max_y = tile_bounds[:, 3].contiguous()
     want_capture = bool(int(os.environ.get("DIFFVG_SPLAT_BWD_CAPTURE", "0") or "0"))
     num_tiles = tile_ptr.shape[0] - 1
     if want_capture:
@@ -545,6 +586,8 @@ def backward_tiled_full_triton(
         color_rgb[:, 0].contiguous(), color_rgb[:, 1].contiguous(), color_rgb[:, 2].contiguous(),
         gr.contiguous(), gg.contiguous(), gb.contiguous(), ga.contiguous(),
         tile_ptr.contiguous(), tile_idx.contiguous(),
+        tile_min_x, tile_max_x,
+        tile_min_y, tile_max_y,
         capture_T_buf.view(-1), capture_ai_buf.view(-1), capture_contrib_buf.view(-1), capture_grad_ai_buf.view(-1),
         width, height, tiles_x, tile_size,
         BLOCK_H=BLOCK, BLOCK_W=BLOCK,
@@ -566,6 +609,7 @@ def backward_tiled_full_triton(
                 opacity,
                 tile_ptr,
                 tile_idx,
+                tile_bounds,
                 width,
                 height,
                 tile_size,

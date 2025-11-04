@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from typing import Tuple
 
@@ -241,6 +242,20 @@ def env_forces_python() -> bool:
     return _impl_mode() in {"python", "torch", "fallback"}
 
 
+def _tile_cull_threshold() -> float:
+    raw = os.environ.get("DIFFVG_SPLAT_TILE_THRESH")
+    default = 1e-4
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        thr = float(raw)
+    except Exception:
+        return default
+    if thr <= 0.0:
+        return 0.0
+    return thr
+
+
 @triton.jit
 def _composite_tiled_kernel(
     out_r_ptr, out_g_ptr, out_b_ptr, out_a_ptr,
@@ -249,6 +264,8 @@ def _composite_tiled_kernel(
     invsx_ptr, invsy_ptr,
     col_r_ptr, col_g_ptr, col_b_ptr, opacity_ptr,
     tile_ptr_ptr, tile_idx_ptr,
+    tile_min_x_ptr, tile_max_x_ptr,
+    tile_min_y_ptr, tile_max_y_ptr,
     W: tl.constexpr,
     H: tl.constexpr,
     tiles_x: tl.constexpr,
@@ -294,20 +311,29 @@ def _composite_tiled_kernel(
         cr = tl.load(col_r_ptr + gi)
         cg = tl.load(col_g_ptr + gi)
         cb = tl.load(col_b_ptr + gi)
-
-        dx = gx - mu_x
-        dy = gy - mu_y
-        lx = cth * dx + sth * dy
-        ly = -sth * dx + cth * dy
-        txx = lx * isx
-        tyy = ly * isy
-        expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
-        ai = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
-        contrib = (1.0 - a) * ai
-        r += contrib * cr
-        g += contrib * cg
-        b += contrib * cb
-        a += contrib
+        min_x = tl.load(tile_min_x_ptr + i).to(tl.int32)
+        max_x = tl.load(tile_max_x_ptr + i).to(tl.int32)
+        min_y = tl.load(tile_min_y_ptr + i).to(tl.int32)
+        max_y = tl.load(tile_max_y_ptr + i).to(tl.int32)
+        row_mask = (oy >= min_y) & (oy <= max_y)
+        col_mask = (ox >= min_x) & (ox <= max_x)
+        active = row_mask[:, None] & col_mask[None, :] & mask2
+        active_count = tl.sum(tl.sum(active.to(tl.int32), axis=1), axis=0)
+        if active_count != 0:
+            dx = gx - mu_x
+            dy = gy - mu_y
+            lx = cth * dx + sth * dy
+            ly = -sth * dx + cth * dy
+            txx = lx * isx
+            tyy = ly * isy
+            expv = tl.exp(-0.5 * (txx * txx + tyy * tyy))
+            ai_full = tl.maximum(tl.minimum(o * expv, 1.0), 0.0)
+            ai = tl.where(active, ai_full, 0.0)
+            contrib = (1.0 - a) * ai
+            r += contrib * cr
+            g += contrib * cg
+            b += contrib * cb
+            a += contrib
         i += 1
 
     # Store back to image
@@ -320,6 +346,224 @@ def _composite_tiled_kernel(
     tl.store(out_a_ptr + lin, tl.minimum(a, 1.0), mask=mask2)
 
 
+def _compute_tile_local_bounds(
+    mu: torch.Tensor,
+    cos_th: torch.Tensor,
+    sin_th: torch.Tensor,
+    sigma_x: torch.Tensor,
+    sigma_y: torch.Tensor,
+    ext_x: torch.Tensor,
+    ext_y: torch.Tensor,
+    width: int,
+    height: int,
+    tile: int,
+    tile_ptr: torch.Tensor,
+    tile_idx: torch.Tensor,
+    tiles_x: int,
+    tiles_y: int,
+    thr: float,
+) -> torch.Tensor:
+    total = int(tile_idx.shape[0])
+    if total == 0:
+        return torch.zeros((0, 4), dtype=torch.int16, device=mu.device)
+
+    counts = tile_ptr[1:] - tile_ptr[:-1]
+    # Repeat each tile id by its population to align with tile_idx entries.
+    tile_ids = torch.repeat_interleave(
+        torch.arange(tiles_x * tiles_y, device=mu.device, dtype=torch.int32),
+        counts.to(torch.int64),
+    )
+    tx = tile_ids % tiles_x
+    ty = tile_ids // tiles_x
+    origin_x = tx.to(torch.int32) * tile
+    origin_y = ty.to(torch.int32) * tile
+    max_x = torch.minimum(
+        origin_x + (tile - 1),
+        torch.full_like(origin_x, max(width - 1, 0)),
+    )
+    max_y = torch.minimum(
+        origin_y + (tile - 1),
+        torch.full_like(origin_y, max(height - 1, 0)),
+    )
+
+    idx = tile_idx.to(torch.int64)
+    mu_x = mu[idx, 0]
+    mu_y = mu[idx, 1]
+    ext_x_sel = ext_x[idx]
+    ext_y_sel = ext_y[idx]
+
+    gmin_x = torch.floor(mu_x - ext_x_sel).to(torch.int32)
+    gmax_x = torch.ceil(mu_x + ext_x_sel).to(torch.int32) - 1
+    gmin_y = torch.floor(mu_y - ext_y_sel).to(torch.int32)
+    gmax_y = torch.ceil(mu_y + ext_y_sel).to(torch.int32) - 1
+
+    if width > 0:
+        gmin_x = torch.clamp(gmin_x, 0, width - 1)
+        gmax_x = torch.clamp(gmax_x, 0, width - 1)
+    if height > 0:
+        gmin_y = torch.clamp(gmin_y, 0, height - 1)
+        gmax_y = torch.clamp(gmax_y, 0, height - 1)
+
+    local_min_x = torch.clamp(gmin_x - origin_x, 0, tile - 1)
+    local_max_x = torch.clamp(gmax_x - origin_x, 0, tile - 1)
+    local_min_y = torch.clamp(gmin_y - origin_y, 0, tile - 1)
+    local_max_y = torch.clamp(gmax_y - origin_y, 0, tile - 1)
+
+    if thr > 0.0:
+        inv_sx_sel = (1.0 / sigma_x[idx]).to(mu.dtype)
+        inv_sy_sel = (1.0 / sigma_y[idx]).to(mu.dtype)
+        cos_sel = cos_th[idx]
+        sin_sel = sin_th[idx]
+        tile_min_x_f = origin_x.to(mu.dtype)
+        tile_min_y_f = origin_y.to(mu.dtype)
+        tile_extent_x = torch.clamp(
+            torch.full_like(origin_x, width, dtype=torch.int32) - origin_x,
+            min=0,
+            max=tile,
+        ).to(mu.dtype)
+        tile_extent_y = torch.clamp(
+            torch.full_like(origin_y, height, dtype=torch.int32) - origin_y,
+            min=0,
+            max=tile,
+        ).to(mu.dtype)
+        tile_max_x_f = tile_min_x_f + tile_extent_x
+        tile_max_y_f = tile_min_y_f + tile_extent_y
+        closest_x = torch.clamp(mu_x, tile_min_x_f, tile_max_x_f)
+        closest_y = torch.clamp(mu_y, tile_min_y_f, tile_max_y_f)
+        dx_cl = closest_x - mu_x
+        dy_cl = closest_y - mu_y
+        lx_cl = cos_sel * dx_cl + sin_sel * dy_cl
+        ly_cl = -sin_sel * dx_cl + cos_sel * dy_cl
+        q = (lx_cl * inv_sx_sel) ** 2 + (ly_cl * inv_sy_sel) ** 2
+        expv = torch.exp(-0.5 * q)
+        skip = expv < thr
+        if skip.any():
+            local_max_x = torch.where(skip, local_min_x - 1, local_max_x)
+            local_max_y = torch.where(skip, local_min_y - 1, local_max_y)
+
+    invalid = (local_max_x < local_min_x) | (local_max_y < local_min_y)
+    if invalid.any():
+        zero32 = torch.zeros((), dtype=torch.int32, device=mu.device)
+        neg_one32 = torch.full((), -1, dtype=torch.int32, device=mu.device)
+        local_min_x = torch.where(invalid, zero32, local_min_x)
+        local_max_x = torch.where(invalid, neg_one32, local_max_x)
+        local_min_y = torch.where(invalid, zero32, local_min_y)
+        local_max_y = torch.where(invalid, neg_one32, local_max_y)
+
+    bounds = torch.stack(
+        [
+            local_min_x.to(torch.int16),
+            local_max_x.to(torch.int16),
+            local_min_y.to(torch.int16),
+            local_max_y.to(torch.int16),
+        ],
+        dim=1,
+    )
+    return bounds
+
+
+def _compute_local_bounds_scalar(
+    mu_x: float,
+    mu_y: float,
+    cos_th: float,
+    sin_th: float,
+    sigma_x: float,
+    sigma_y: float,
+    ext_x: float,
+    ext_y: float,
+    origin_x: int,
+    origin_y: int,
+    width: int,
+    height: int,
+    tile: int,
+    thr: float,
+) -> Tuple[int, int, int, int]:
+    max_x = min(origin_x + tile - 1, max(width - 1, 0))
+    max_y = min(origin_y + tile - 1, max(height - 1, 0))
+    gmin_x = math.floor(mu_x - ext_x)
+    gmax_x = math.ceil(mu_x + ext_x) - 1
+    gmin_y = math.floor(mu_y - ext_y)
+    gmax_y = math.ceil(mu_y + ext_y) - 1
+    if width > 0:
+        gmin_x = max(0, min(gmin_x, width - 1))
+        gmax_x = max(0, min(gmax_x, width - 1))
+    else:
+        gmin_x = gmax_x = 0
+    if height > 0:
+        gmin_y = max(0, min(gmin_y, height - 1))
+        gmax_y = max(0, min(gmax_y, height - 1))
+    else:
+        gmin_y = gmax_y = 0
+    local_min_x = max(0, min(tile - 1, gmin_x - origin_x))
+    local_max_x = max(0, min(tile - 1, gmax_x - origin_x))
+    local_min_y = max(0, min(tile - 1, gmin_y - origin_y))
+    local_max_y = max(0, min(tile - 1, gmax_y - origin_y))
+    if local_max_x < local_min_x or local_max_y < local_min_y:
+        return (0, -1, 0, -1)
+
+    if thr > 0.0:
+        tile_w = max(0, min(tile, width - origin_x))
+        tile_h = max(0, min(tile, height - origin_y))
+        tile_max_x = origin_x + tile_w
+        tile_max_y = origin_y + tile_h
+        closest_x = min(max(mu_x, origin_x), tile_max_x)
+        closest_y = min(max(mu_y, origin_y), tile_max_y)
+        dx_cl = closest_x - mu_x
+        dy_cl = closest_y - mu_y
+        inv_sx = 1.0 / max(sigma_x, 1e-12)
+        inv_sy = 1.0 / max(sigma_y, 1e-12)
+        lx_cl = cos_th * dx_cl + sin_th * dy_cl
+        ly_cl = -sin_th * dx_cl + cos_th * dy_cl
+        q = (lx_cl * inv_sx) ** 2 + (ly_cl * inv_sy) ** 2
+        if math.exp(-0.5 * q) < thr:
+            return (0, -1, 0, -1)
+    return (
+        int(local_min_x),
+        int(local_max_x),
+        int(local_min_y),
+        int(local_max_y),
+    )
+
+
+def _full_tile_bounds(
+    tile_ptr: torch.Tensor,
+    tile_idx: torch.Tensor,
+    tiles_x: int,
+    tiles_y: int,
+    tile: int,
+    width: int,
+    height: int,
+) -> torch.Tensor:
+    total = int(tile_idx.shape[0])
+    bounds = torch.zeros((total, 4), dtype=torch.int16, device=tile_idx.device)
+    if total == 0:
+        return bounds
+    counts = tile_ptr[1:] - tile_ptr[:-1]
+    tile_ids = torch.repeat_interleave(
+        torch.arange(tiles_x * tiles_y, device=tile_idx.device, dtype=torch.int32),
+        counts.to(torch.int64),
+    )
+    tx = tile_ids % tiles_x
+    ty = tile_ids // tiles_x
+    origin_x = tx.to(torch.int32) * tile
+    origin_y = ty.to(torch.int32) * tile
+    width_extent = torch.clamp(
+        torch.full_like(origin_x, width, dtype=torch.int32) - origin_x,
+        min=0,
+        max=tile,
+    )
+    height_extent = torch.clamp(
+        torch.full_like(origin_y, height, dtype=torch.int32) - origin_y,
+        min=0,
+        max=tile,
+    )
+    max_x = torch.clamp(width_extent - 1, min=0)
+    max_y = torch.clamp(height_extent - 1, min=0)
+    bounds[:, 1] = max_x.to(torch.int16)
+    bounds[:, 3] = max_y.to(torch.int16)
+    return bounds
+
+
 def _build_tile_csr(
     mu: torch.Tensor,
     theta: torch.Tensor,
@@ -328,15 +572,19 @@ def _build_tile_csr(
     width: int,
     height: int,
     tile: int,
-) -> Tuple[torch.Tensor, torch.Tensor, int, int]:
-    """Build CSR bins (tile_ptr, tile_idx).
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
+    """Build CSR bins (tile_ptr, tile_idx) plus per-entry local bounds.
 
     If Triton/CUDA is available, builds on GPU:
       1) compute per-gaussian tile rectangles (vectorized torch ops)
       2) compute per-gaussian coverage counts
       3) Triton bin-count kernel accumulates per-tile totals (no global sort)
       4) exclusive scan + scatter kernel fill CSR buffers
-    Fallback to the previous CPU method otherwise.
+    Fallback to the previous CPU method otherwise. Returns:
+      - tile_ptr: CSR offsets (num_tiles + 1)
+      - tile_idx: Gaussian indices per active tile entry
+      - tile_bounds: int16 [N,4] storing (min_x, max_x, min_y, max_y) in tile-local pixels
+      - tiles_x / tiles_y: tile grid dimensions
     """
     device = mu.device
     dtype = mu.dtype
@@ -421,7 +669,36 @@ def _build_tile_csr(
             num_warps=1,
             num_stages=1,
         )
-        return tile_ptr, tile_idx, tiles_x, tiles_y
+        thr = _tile_cull_threshold()
+        if thr > 0.0:
+            tile_bounds = _compute_tile_local_bounds(
+                mu,
+                cos_th,
+                sin_th,
+                sigma_x,
+                sigma_y,
+                ext_x,
+                ext_y,
+                width,
+                height,
+                tile,
+                tile_ptr,
+                tile_idx,
+                tiles_x,
+                tiles_y,
+                thr,
+            )
+        else:
+            tile_bounds = _full_tile_bounds(
+                tile_ptr,
+                tile_idx,
+                tiles_x,
+                tiles_y,
+                tile,
+                width,
+                height,
+            )
+        return tile_ptr, tile_idx, tile_bounds, tiles_x, tiles_y
 
     # Fallback: CPU implementation (original path)
     cos_th = torch.cos(theta).to(dtype)
@@ -453,12 +730,57 @@ def _build_tile_csr(
         acc += c
     tile_ptr[-1] = acc
     tile_idx = torch.empty(acc, dtype=torch.int32)
+    tile_bounds = torch.zeros((acc, 4), dtype=torch.int16)
+    thr = _tile_cull_threshold()
     off = 0
-    for b in bins:
-        if b:
-            tile_idx[off:off + len(b)] = torch.tensor(b, dtype=torch.int32)
-            off += len(b)
-    return tile_ptr.to(device), tile_idx.to(device), tiles_x, tiles_y
+    tile_id = 0
+    for ty in range(tiles_y):
+        for tx in range(tiles_x):
+            b = bins[tile_id]
+            if b:
+                origin_x = tx * tile
+                origin_y = ty * tile
+                tile_w = max(0, min(tile, width - origin_x)) if width > 0 else 0
+                tile_h = max(0, min(tile, height - origin_y)) if height > 0 else 0
+                full_max_x = max(0, tile_w - 1)
+                full_max_y = max(0, tile_h - 1)
+                for gi in b:
+                    tile_idx[off] = gi
+                    if thr > 0.0:
+                        lmin_x, lmax_x, lmin_y, lmax_y = _compute_local_bounds_scalar(
+                            mu[gi, 0].item(),
+                            mu[gi, 1].item(),
+                            cos_th[gi].item(),
+                            sin_th[gi].item(),
+                            sigma_x[gi].item(),
+                            sigma_y[gi].item(),
+                            ext_x[gi].item(),
+                            ext_y[gi].item(),
+                            origin_x,
+                            origin_y,
+                            width,
+                            height,
+                            tile,
+                            thr,
+                        )
+                        tile_bounds[off, 0] = lmin_x
+                        tile_bounds[off, 1] = lmax_x
+                        tile_bounds[off, 2] = lmin_y
+                        tile_bounds[off, 3] = lmax_y
+                    else:
+                        tile_bounds[off, 0] = 0
+                        tile_bounds[off, 1] = full_max_x
+                        tile_bounds[off, 2] = 0
+                        tile_bounds[off, 3] = full_max_y
+                    off += 1
+            tile_id += 1
+    return (
+        tile_ptr.to(device),
+        tile_idx.to(device),
+        tile_bounds.to(device),
+        tiles_x,
+        tiles_y,
+    )
 
 
 def composite_gaussians_tiled_triton(
@@ -490,7 +812,13 @@ def composite_gaussians_tiled_triton(
     out_b = torch.zeros((height, width), device=D, dtype=dtype)
     out_a = torch.zeros((height, width), device=D, dtype=dtype)
 
-    tile_ptr, tile_idx, tiles_x, tiles_y = _build_tile_csr(mu, theta, sigma_x, sigma_y, width, height, tile_size)
+    tile_ptr, tile_idx, tile_bounds, tiles_x, tiles_y = _build_tile_csr(
+        mu, theta, sigma_x, sigma_y, width, height, tile_size
+    )
+    tile_min_x = tile_bounds[:, 0].contiguous()
+    tile_max_x = tile_bounds[:, 1].contiguous()
+    tile_min_y = tile_bounds[:, 2].contiguous()
+    tile_max_y = tile_bounds[:, 3].contiguous()
 
     grid = (tiles_y, tiles_x)
     BLOCK = int(tile_size)
@@ -501,6 +829,8 @@ def composite_gaussians_tiled_triton(
         inv_sx, inv_sy,
         color_rgb[:, 0].contiguous(), color_rgb[:, 1].contiguous(), color_rgb[:, 2].contiguous(), opacity.contiguous(),
         tile_ptr.contiguous(), tile_idx.contiguous(),
+        tile_min_x, tile_max_x,
+        tile_min_y, tile_max_y,
         width, height, tiles_x, tile_size,
         BLOCK_H=BLOCK, BLOCK_W=BLOCK,
     )
