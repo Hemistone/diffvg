@@ -42,8 +42,12 @@ gamma = 1.0
 
 
 def main(args):
+    backend = getattr(args, "backend", "baseline").strip().lower()
+    pydiffvg.set_backend(backend)
     use_gpu = torch.cuda.is_available()
     pydiffvg.set_use_gpu(use_gpu)
+
+    precondition = bool(getattr(args, "precondition", False))
 
     # Build loss function
     device = pydiffvg.get_device()
@@ -131,6 +135,7 @@ def main(args):
 
     run_label = f"{_sanitize_component(target_path.stem)}_paths{num_paths}_"
     run_label += "blob" if args.use_blob else "strokes"
+    run_label += "_precondition" if precondition else ""
 
     run = create_run_context(
         run_label,
@@ -142,6 +147,8 @@ def main(args):
     device_str = str(pydiffvg.get_device())
     config_items = {
         "device": device_str,
+        "backend": backend,
+        "precondition": precondition,
         "target": str(target_path),
         "canvas": f"{canvas_width}x{canvas_height}",
         "paths": num_paths,
@@ -167,43 +174,37 @@ def main(args):
     random.seed(1234)
     torch.manual_seed(1234)
 
+    renderer = pydiffvg.Renderer(backend=backend)
     shapes = []
     shape_groups = []
-    if args.use_blob:
-        for i in range(num_paths):
-            num_segments = random.randint(3, 5)
-            num_control_points = torch.zeros(num_segments, dtype = torch.int32) + 2
-            points = []
-            p0 = (random.random(), random.random())
-            points.append(p0)
-            for j in range(num_segments):
-                radius = 0.05
-                p1 = (p0[0] + radius * (random.random() - 0.5), p0[1] + radius * (random.random() - 0.5))
-                p2 = (p1[0] + radius * (random.random() - 0.5), p1[1] + radius * (random.random() - 0.5))
-                p3 = (p2[0] + radius * (random.random() - 0.5), p2[1] + radius * (random.random() - 0.5))
-                points.append(p1)
-                points.append(p2)
-                if j < num_segments - 1:
-                    points.append(p3)
-                    p0 = p3
-            points = torch.tensor(points)
-            points[:, 0] *= canvas_width
-            points[:, 1] *= canvas_height
-            path = pydiffvg.Path(num_control_points = num_control_points,
-                                 points = points,
-                                 stroke_width = torch.tensor(1.0),
-                                 is_closed = True)
-            shapes.append(path)
-            path_group = pydiffvg.ShapeGroup(shape_ids = torch.tensor([len(shapes) - 1]),
-                                             fill_color = torch.tensor([random.random(),
-                                                                        random.random(),
-                                                                        random.random(),
-                                                                        random.random()]))
-            shape_groups.append(path_group)
+
+    if getattr(args, "precondition", False):
+        if args.use_blob:
+            raise ValueError("--precondition is incompatible with --use_blob (preconditioning generates stroke paths).")
+        cfg = pydiffvg.PreconditionConfig()
+        cfg.max_paths = num_paths
+        cfg.max_stroke_width = max_width
+        cfg.base_stroke_width = min(cfg.base_stroke_width, max_width)
+        pre = pydiffvg.build_preconditioned_scene(
+            args.target,
+            cfg=cfg,
+            backend=backend,
+            device=device,
+        )
+        shapes = pre.shapes
+        shape_groups = pre.shape_groups
+        if (pre.width, pre.height) != (canvas_width, canvas_height):
+            canvas_width, canvas_height = pre.width, pre.height
+        # Save debug masks alongside run artifacts
+        pydiffvg.imwrite(pre.edge_mask.astype(np.float32), str(run.results_dir / "precond_edge.png"), gamma=1.0)
+        pydiffvg.imwrite(pre.skeleton.astype(np.float32), str(run.results_dir / "precond_skeleton.png"), gamma=1.0)
     else:
         for i in range(num_paths):
-            num_segments = random.randint(1, 3)
-            num_control_points = torch.zeros(num_segments, dtype = torch.int32) + 2
+            if args.use_blob:
+                num_segments = random.randint(3, 5)
+            else:
+                num_segments = random.randint(1, 3)
+            num_control_points = torch.zeros(num_segments, dtype=torch.int32, device=device) + 2
             points = []
             p0 = (random.random(), random.random())
             points.append(p0)
@@ -214,39 +215,63 @@ def main(args):
                 p3 = (p2[0] + radius * (random.random() - 0.5), p2[1] + radius * (random.random() - 0.5))
                 points.append(p1)
                 points.append(p2)
-                points.append(p3)
-                p0 = p3
-            points = torch.tensor(points)
+                if args.use_blob:
+                    if j < num_segments - 1:
+                        points.append(p3)
+                        p0 = p3
+                else:
+                    points.append(p3)
+                    p0 = p3
+            points = torch.tensor(points, device=device)
             points[:, 0] *= canvas_width
             points[:, 1] *= canvas_height
-            #points = torch.rand(3 * num_segments + 1, 2) * min(canvas_width, canvas_height)
-            path = pydiffvg.Path(num_control_points = num_control_points,
-                                 points = points,
-                                 stroke_width = torch.tensor(1.0),
-                                 is_closed = False)
+            path = pydiffvg.Path(
+                num_control_points=num_control_points,
+                points=points,
+                stroke_width=torch.tensor(1.0, device=device),
+                is_closed=args.use_blob,
+            )
             shapes.append(path)
-            path_group = pydiffvg.ShapeGroup(shape_ids = torch.tensor([len(shapes) - 1]),
-                                             fill_color = None,
-                                             stroke_color = torch.tensor([random.random(),
-                                                                          random.random(),
-                                                                          random.random(),
-                                                                          random.random()]))
+            if args.use_blob:
+                path_group = pydiffvg.ShapeGroup(
+                    shape_ids=torch.tensor([len(shapes) - 1], device=device),
+                    fill_color=torch.tensor(
+                        [random.random(), random.random(), random.random(), random.random()],
+                        device=device,
+                    ),
+                )
+            else:
+                path_group = pydiffvg.ShapeGroup(
+                    shape_ids=torch.tensor([len(shapes) - 1], device=device),
+                    fill_color=None,
+                    stroke_color=torch.tensor(
+                        [random.random(), random.random(), random.random(), random.random()],
+                        device=device,
+                    ),
+                )
             shape_groups.append(path_group)
-    
-    scene_args = pydiffvg.RenderFunction.serialize_scene(
-        canvas_width, canvas_height, shapes, shape_groups
-    )
 
-    render = pydiffvg.RenderFunction.apply
-    img = render(
-        canvas_width,
-        canvas_height,
-        2,
-        2,
-        0,
-        None,
-        *scene_args,
-    )
+    def _render(seed: int, invalidate: bool = True):
+        scene_args = renderer.serialize_scene(
+            canvas_width,
+            canvas_height,
+            shapes,
+            shape_groups,
+            device=device,
+            cache_key="main",
+            invalidate_cache=invalidate,
+        )
+        return renderer.apply(
+            canvas_width,
+            canvas_height,
+            2,
+            2,
+            seed,
+            None,
+            *scene_args,
+        )
+
+    img = _render(0, invalidate=False)
     # Save initial frame composited over white for visualization
     init_rgb = _rgba_over_white(img)
     pydiffvg.imwrite(init_rgb.cpu(), str(run.results_dir / "init.png"), gamma=gamma)
@@ -283,18 +308,7 @@ def main(args):
             if width_optim is not None:
                 width_optim.zero_grad()
             color_optim.zero_grad()
-            scene_args = pydiffvg.RenderFunction.serialize_scene(
-                canvas_width, canvas_height, shapes, shape_groups
-            )
-            img = render(
-                canvas_width,
-                canvas_height,
-                2,
-                2,
-                t,
-                None,
-                *scene_args,
-            )
+            img = _render(t)
             # Compose to RGB (over white) and save if requested
             img_rgb = _rgba_over_white(img)
             save_every = getattr(args, "save_every", 1)
@@ -340,18 +354,7 @@ def main(args):
         progress.close()
 
     # Render the final result.
-    scene_args = pydiffvg.RenderFunction.serialize_scene(
-        canvas_width, canvas_height, shapes, shape_groups
-    )
-    img = render(
-        canvas_width,
-        canvas_height,
-        2,
-        2,
-        0,
-        None,
-        *scene_args,
-    )
+    img = _render(0)
     final_rgb = _rgba_over_white(img)
     pydiffvg.imwrite(final_rgb.cpu(), str(run.results_dir / "final.png"), gamma=gamma)
     # Also emit final SVG with white background if requested
@@ -373,6 +376,8 @@ if __name__ == "__main__":
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num_paths", type=int, default=512)
     parser.add_argument("--max_width", type=float, default=2.0)
+    parser.add_argument("--backend", type=str, default="baseline", choices=["baseline", "splat"], help="Render backend")
+    parser.add_argument("--precondition", action="store_true", help="Seed paths via raster preconditioning instead of random init")
     parser.add_argument("--loss", type=str, default="mse", help="Loss: mse|l1|lpips|msssim|dists|perceptual-balanced")
     parser.add_argument("--num_iter", type=int, default=500)
     parser.add_argument("--save_svg_every", type=int, default=0, help="Save SVG every N iters (0 disables)")
