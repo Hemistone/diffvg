@@ -14,6 +14,7 @@ from .config import PreconditionConfig
 from .skeleton import skeletonize_edges, skeleton_to_polylines
 from .vectorize import polylines_to_paths
 from .xdog import xdog_edges
+from .lineart import build_lineart_scene
 
 
 def _load_image(image: str | Path | np.ndarray) -> np.ndarray:
@@ -57,19 +58,22 @@ def build_preconditioned_scene(
     device = device if device is not None else pydiffvg.get_device()
 
     rgb = _load_image(image)
-    edge_mask = xdog_edges(rgb, cfg)
-    skeleton = skeletonize_edges(edge_mask)
-    polylines = skeleton_to_polylines(skeleton, cfg)
-
     height, width = rgb.shape[0], rgb.shape[1]
-    shapes, groups = polylines_to_paths(
-        polylines,
-        rgb,
-        cfg,
-        canvas_w=width,
-        canvas_h=height,
-        device=device,
-    )
+    if cfg.mode == "lineart":
+        shapes, groups, edge_mask, skeleton = build_lineart_scene(rgb, cfg, device=device)
+        polylines: list[list[tuple[int, int]]] = []
+    else:
+        edge_mask = xdog_edges(rgb, cfg)
+        skeleton = skeletonize_edges(edge_mask)
+        polylines = skeleton_to_polylines(skeleton, cfg)
+        shapes, groups = polylines_to_paths(
+            polylines,
+            rgb,
+            cfg,
+            canvas_w=width,
+            canvas_h=height,
+            device=device,
+        )
 
     renderer = pydiffvg.Renderer(backend=backend)
     scene_args = renderer.serialize_scene(

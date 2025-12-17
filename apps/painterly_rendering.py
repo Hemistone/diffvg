@@ -178,13 +178,16 @@ def main(args):
     shapes = []
     shape_groups = []
 
-    if getattr(args, "precondition", False):
+    if getattr(args, "precondition", False) or getattr(args, "lineart_precondition", False):
         if args.use_blob:
-            raise ValueError("--precondition is incompatible with --use_blob (preconditioning generates stroke paths).")
+            raise ValueError("Preconditioning is incompatible with --use_blob (preconditioning generates stroke paths).")
         cfg = pydiffvg.PreconditionConfig()
         cfg.max_paths = num_paths
         cfg.max_stroke_width = max_width
         cfg.base_stroke_width = min(cfg.base_stroke_width, max_width)
+        if getattr(args, "lineart_precondition", False):
+            cfg.mode = "lineart"
+            cfg.num_colors = 1
         pre = pydiffvg.build_preconditioned_scene(
             args.target,
             cfg=cfg,
@@ -377,7 +380,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_paths", type=int, default=512)
     parser.add_argument("--max_width", type=float, default=2.0)
     parser.add_argument("--backend", type=str, default="baseline", choices=["baseline", "splat"], help="Render backend")
-    parser.add_argument("--precondition", action="store_true", help="Seed paths via raster preconditioning instead of random init")
+    parser.add_argument("--precondition", action="store_true", help="Seed paths via XDoG preconditioning instead of random init")
+    parser.add_argument("--lineart-precondition", action="store_true", help="Seed paths via line-art preconditioning (palette + skeleton).")
     parser.add_argument("--loss", type=str, default="mse", help="Loss: mse|l1|lpips|msssim|dists|perceptual-balanced")
     parser.add_argument("--num_iter", type=int, default=500)
     parser.add_argument("--save_svg_every", type=int, default=0, help="Save SVG every N iters (0 disables)")

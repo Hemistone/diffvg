@@ -41,5 +41,5 @@ piq # Support various perceptuals use in painterly_rendering.py
 #pygame>=2.5
 #ipython>=8.18
 #wget>=3.2
-#scikit-learn>=1.4
+scikit-learn>=1.7
 #svgwrite>=1.4  # transitively from svgpathtools, listed here for convenience

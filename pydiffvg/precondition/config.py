@@ -43,5 +43,14 @@ class PreconditionConfig:
     # Scoring / ordering
     sort_by: str = "darkness_length"  # or "length"
 
+    # Line-art mode toggles
+    mode: str = "xdog"  # "xdog" or "lineart"
+    num_colors: int = 1
+    palette_mode: str = "auto"  # "auto" or "fixed"
+    palette_colors: list[tuple[float, float, float]] | None = None
+    merge_distance: float = 3.0
+    merge_angle_deg: float = 18.0
+    clamp_stroke_width_per_color: bool = True
+
 
 __all__ = ["PreconditionConfig"]

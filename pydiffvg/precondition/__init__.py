@@ -5,11 +5,13 @@ from .init_paths import PreconditionedScene, build_preconditioned_scene
 from .xdog import xdog_edges
 from .skeleton import skeletonize_edges, skeleton_to_polylines
 from .vectorize import polylines_to_paths
+from .lineart import build_lineart_scene
 
 __all__ = [
     "PreconditionConfig",
     "PreconditionedScene",
     "build_preconditioned_scene",
+    "build_lineart_scene",
     "xdog_edges",
     "skeletonize_edges",
     "skeleton_to_polylines",
