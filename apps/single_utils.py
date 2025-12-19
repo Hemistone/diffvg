@@ -153,14 +153,22 @@ class RunContext:
         return build_video(self.frame_pattern(), self.video_path(filename), fps=self.video_fps, bitrate=self.video_bitrate)
 
 
-def create_run_context(task_name: str, total_iters: int, *, results_root: Union[Path, str] = Path("results"), video_fps: int = 24, video_bitrate: str = "20M") -> RunContext:
+def create_run_context(
+    task_name: str,
+    total_iters: int,
+    *,
+    results_root: Union[Path, str] = Path("results"),
+    video_fps: int = 24,
+    video_bitrate: str = "20M",
+    label: Optional[str] = None,
+) -> RunContext:
     results_dir = Path(results_root) / task_name
     iter_dir = results_dir / "iter"
     results_dir.mkdir(parents=True, exist_ok=True)
     if iter_dir.exists():
         shutil.rmtree(iter_dir)
     iter_dir.mkdir()
-    progress = ProgressLogger(total_iters, label=task_name)
+    progress = ProgressLogger(total_iters, label=label or task_name)
     return RunContext(task_name, total_iters, results_dir, iter_dir, video_fps, video_bitrate, progress)
 
 
