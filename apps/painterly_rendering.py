@@ -21,6 +21,13 @@ import torch
 from single_utils import create_run_context, log_run_configuration
 
 
+def _default_teed_weights_path() -> str | None:
+    candidate = Path("weights/teed/5_model.pth")
+    if candidate.is_file():
+        return str(candidate)
+    return None
+
+
 def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
     """Composite RGBA to RGB over white.
 
@@ -48,6 +55,10 @@ def main(args):
     pydiffvg.set_use_gpu(use_gpu)
 
     precondition = bool(getattr(args, "precondition", False))
+    lineart_precondition = bool(getattr(args, "lineart_precondition", False))
+    edge_backend = getattr(args, "edge_backend", "xdog").strip().lower()
+    fixed_stroke = bool(getattr(args, "fixed_stroke", False))
+    fixed_stroke_alpha = float(getattr(args, "fixed_stroke_alpha", 0.9))
 
     # Build loss function
     device = pydiffvg.get_device()
@@ -135,20 +146,41 @@ def main(args):
 
     run_label = f"{_sanitize_component(target_path.stem)}_paths{num_paths}_"
     run_label += "blob" if args.use_blob else "strokes"
-    run_label += "_precondition" if precondition else ""
+    if precondition:
+        run_label += f"_precondition_{edge_backend}"
+    elif lineart_precondition:
+        run_label += "_lineart_precondition"
+
+    mode_dir = "blob" if args.use_blob else ("strokes_precondition" if (precondition or lineart_precondition) else "strokes")
+    image_dir = _sanitize_component(target_path.stem)
+    variant_parts = [backend, loss_name]
+    if precondition:
+        variant_parts.append(edge_backend)
+    elif lineart_precondition:
+        variant_parts.append("lineart")
+    if fixed_stroke and not args.use_blob:
+        variant_parts.append("fixed_ink")
+    variant_dir = "_".join(variant_parts)
+
+    task_subdir = Path(mode_dir) / str(num_paths) / image_dir / str(args.num_iter) / variant_dir
 
     run = create_run_context(
-        run_label,
+        str(task_subdir),
         args.num_iter,
         video_fps=24,
         video_bitrate="20M",
         results_root=Path("results") / "painterly_rendering",
+        label=run_label,
     )
     device_str = str(pydiffvg.get_device())
     config_items = {
         "device": device_str,
         "backend": backend,
-        "precondition": precondition,
+        "precondition": precondition or lineart_precondition,
+        "lineart_precondition": lineart_precondition,
+        "edge_backend": edge_backend if precondition else None,
+        "fixed_stroke": fixed_stroke if not args.use_blob else None,
+        "fixed_stroke_alpha": fixed_stroke_alpha if (fixed_stroke and not args.use_blob) else None,
         "target": str(target_path),
         "canvas": f"{canvas_width}x{canvas_height}",
         "paths": num_paths,
@@ -158,6 +190,18 @@ def main(args):
         "blob_mode": args.use_blob,
         "run_dir": run.results_dir,
     }
+    if precondition and edge_backend == "teed":
+        config_items["teed_weights"] = getattr(args, "teed_weights", None) or _default_teed_weights_path()
+        config_items["teed_detect_res"] = getattr(args, "teed_detect_res", None)
+        config_items["teed_threshold"] = getattr(args, "teed_threshold", None)
+        config_items["teed_safe_steps"] = getattr(args, "teed_safe_steps", None)
+        config_items["precond_min_path_length"] = getattr(args, "precond_min_path_length", None)
+        config_items["precond_max_path_length"] = getattr(args, "precond_max_path_length", None)
+        config_items["precond_min_component_area"] = getattr(args, "precond_min_component_area", None)
+        config_items["precond_morph_open_radius"] = getattr(args, "precond_morph_open_radius", None)
+        config_items["precond_morph_close_radius"] = getattr(args, "precond_morph_close_radius", None)
+        config_items["precond_base_stroke_width"] = getattr(args, "precond_base_stroke_width", None)
+        config_items["precond_max_stroke_width"] = getattr(args, "precond_max_stroke_width", None)
     if pydiffvg.get_backend() == "splat":
         raw_thresh = os.environ.get("DIFFVG_SPLAT_TILE_THRESH")
         if raw_thresh is None or raw_thresh.strip() == "":
@@ -183,9 +227,47 @@ def main(args):
             raise ValueError("Preconditioning is incompatible with --use_blob (preconditioning generates stroke paths).")
         cfg = pydiffvg.PreconditionConfig()
         cfg.max_paths = num_paths
-        cfg.max_stroke_width = max_width
-        cfg.base_stroke_width = min(cfg.base_stroke_width, max_width)
-        if getattr(args, "lineart_precondition", False):
+        if fixed_stroke:
+            cfg.fixed_stroke_rgba = (0.0, 0.0, 0.0, max(0.0, min(1.0, fixed_stroke_alpha)))
+        if precondition:
+            cfg.edge_backend = edge_backend
+            if edge_backend == "teed":
+                cfg.teed_weights_path = getattr(args, "teed_weights", None) or _default_teed_weights_path()
+                if cfg.teed_weights_path is None or str(cfg.teed_weights_path).strip() == "":
+                    raise ValueError(
+                        "--edge-backend teed requires weights. "
+                        "Put them at weights/teed/5_model.pth or pass --teed-weights PATH."
+                    )
+
+                cfg.teed_detect_resolution = int(getattr(args, "teed_detect_res", None) or 512)
+                cfg.teed_safe_steps = int(getattr(args, "teed_safe_steps", None) if getattr(args, "teed_safe_steps", None) is not None else 0)
+                cfg.teed_threshold = float(getattr(args, "teed_threshold", None) if getattr(args, "teed_threshold", None) is not None else 0.30)
+
+                cfg.min_path_length = int(getattr(args, "precond_min_path_length", None) or 4)
+                cfg.max_path_length = int(getattr(args, "precond_max_path_length", None) or 64)
+                cfg.min_component_area = int(getattr(args, "precond_min_component_area", None) or 0)
+                cfg.morph_open_radius = int(getattr(args, "precond_morph_open_radius", None) or 0)
+                cfg.morph_close_radius = int(getattr(args, "precond_morph_close_radius", None) or 0)
+
+                base_w = float(getattr(args, "precond_base_stroke_width", None) or 0.5)
+                max_w = float(getattr(args, "precond_max_stroke_width", None) or 1.0)
+                max_w = min(max_w, max_width)
+                cfg.max_stroke_width = max_w
+                cfg.base_stroke_width = min(base_w, max_w)
+            else:
+                # For apples-to-apples comparisons with TEED, keep XDoG defaults
+                # aligned unless the user explicitly overrides them.
+                base_w = float(getattr(args, "precond_base_stroke_width", None) or 0.5)
+                max_w = float(getattr(args, "precond_max_stroke_width", None) or 1.0)
+                max_w = min(max_w, max_width)
+                cfg.max_stroke_width = max_w
+                cfg.base_stroke_width = min(base_w, max_w)
+        else:
+            cfg.max_stroke_width = max_width
+            cfg.base_stroke_width = min(cfg.base_stroke_width, max_width)
+        if lineart_precondition:
+            if precondition and edge_backend != "xdog":
+                print("NOTE: --edge-backend is ignored when using --lineart-precondition.")
             cfg.mode = "lineart"
             cfg.num_colors = 1
         pre = pydiffvg.build_preconditioned_scene(
@@ -194,8 +276,14 @@ def main(args):
             backend=backend,
             device=device,
         )
+        if len(pre.shapes) == 0 or len(pre.shape_groups) == 0:
+            raise ValueError(
+                "Preconditioning produced 0 paths. "
+                "Try lowering thresholds (e.g., --teed-threshold) or relaxing cleanup parameters."
+            )
         shapes = pre.shapes
         shape_groups = pre.shape_groups
+        print(f"[precond] generated {len(shapes)}/{num_paths} paths (edge_backend={edge_backend})")
         if (pre.width, pre.height) != (canvas_width, canvas_height):
             canvas_width, canvas_height = pre.width, pre.height
         # Save debug masks alongside run artifacts
@@ -244,13 +332,17 @@ def main(args):
                     ),
                 )
             else:
+                if fixed_stroke:
+                    stroke_color = torch.tensor([0.0, 0.0, 0.0, max(0.0, min(1.0, fixed_stroke_alpha))], device=device)
+                else:
+                    stroke_color = torch.tensor(
+                        [random.random(), random.random(), random.random(), random.random()],
+                        device=device,
+                    )
                 path_group = pydiffvg.ShapeGroup(
                     shape_ids=torch.tensor([len(shapes) - 1], device=device),
                     fill_color=None,
-                    stroke_color=torch.tensor(
-                        [random.random(), random.random(), random.random(), random.random()],
-                        device=device,
-                    ),
+                    stroke_color=stroke_color,
                 )
             shape_groups.append(path_group)
 
@@ -294,14 +386,15 @@ def main(args):
             group.fill_color.requires_grad = True
             color_vars.append(group.fill_color)
     else:
-        for group in shape_groups:
-            group.stroke_color.requires_grad = True
-            color_vars.append(group.stroke_color)
+        if not fixed_stroke:
+            for group in shape_groups:
+                group.stroke_color.requires_grad = True
+                color_vars.append(group.stroke_color)
     
     # Optimize
     points_optim = torch.optim.Adam(points_vars, lr=1.0)
     width_optim = torch.optim.Adam(stroke_width_vars, lr=0.1) if stroke_width_vars else None
-    color_optim = torch.optim.Adam(color_vars, lr=0.01)
+    color_optim = torch.optim.Adam(color_vars, lr=0.01) if color_vars else None
 
     progress = run.progress
     t = -1
@@ -310,7 +403,8 @@ def main(args):
             points_optim.zero_grad()
             if width_optim is not None:
                 width_optim.zero_grad()
-            color_optim.zero_grad()
+            if color_optim is not None:
+                color_optim.zero_grad()
             img = _render(t)
             # Compose to RGB (over white) and save if requested
             img_rgb = _rgba_over_white(img)
@@ -327,7 +421,8 @@ def main(args):
             points_optim.step()
             if width_optim is not None:
                 width_optim.step()
-            color_optim.step()
+            if color_optim is not None:
+                color_optim.step()
             if width_optim is not None:
                 for path in shapes:
                     path.stroke_width.data.clamp_(1.0, max_width)
@@ -335,8 +430,9 @@ def main(args):
                 for group in shape_groups:
                     group.fill_color.data.clamp_(0.0, 1.0)
             else:
-                for group in shape_groups:
-                    group.stroke_color.data.clamp_(0.0, 1.0)
+                if not fixed_stroke:
+                    for group in shape_groups:
+                        group.stroke_color.data.clamp_(0.0, 1.0)
 
             svg_every = getattr(args, "save_svg_every", 0)
             if (svg_every and svg_every > 0 and (t % svg_every == 0)) or (t == args.num_iter - 1 and svg_every and svg_every > 0):
@@ -380,8 +476,22 @@ if __name__ == "__main__":
     parser.add_argument("--num_paths", type=int, default=512)
     parser.add_argument("--max_width", type=float, default=2.0)
     parser.add_argument("--backend", type=str, default="baseline", choices=["baseline", "splat"], help="Render backend")
-    parser.add_argument("--precondition", action="store_true", help="Seed paths via XDoG preconditioning instead of random init")
+    parser.add_argument("--precondition", action="store_true", help="Seed paths via preconditioning instead of random init (see --edge-backend)")
     parser.add_argument("--lineart-precondition", action="store_true", help="Seed paths via line-art preconditioning (palette + skeleton).")
+    parser.add_argument("--edge-backend", type=str, default="xdog", choices=["xdog", "teed"], help="Edge backend for --precondition")
+    parser.add_argument("--teed-weights", type=str, default=None, help="Path to TEED weights (.pth). Default: weights/teed/5_model.pth if present")
+    parser.add_argument("--teed-detect-res", type=int, default=None, help="TEED detect resolution (min side); default=512 for TEED runs")
+    parser.add_argument("--teed-threshold", type=float, default=None, help="TEED threshold (0..1); default=0.30 for TEED runs")
+    parser.add_argument("--teed-safe-steps", type=int, default=None, help="Quantization steps; default=0 for TEED runs")
+    parser.add_argument("--precond-min-path-length", type=int, default=None, help="Preconditioning min skeleton polyline length; default=4 for TEED")
+    parser.add_argument("--precond-max-path-length", type=int, default=None, help="Preconditioning max skeleton polyline length; default=64 for TEED")
+    parser.add_argument("--precond-min-component-area", type=int, default=None, help="Remove edge components smaller than this area; default=0 for TEED")
+    parser.add_argument("--precond-morph-open-radius", type=int, default=None, help="Edge mask binary opening radius; default=0 for TEED")
+    parser.add_argument("--precond-morph-close-radius", type=int, default=None, help="Edge mask binary closing radius; default=0 for TEED")
+    parser.add_argument("--precond-base-stroke-width", type=float, default=None, help="Precondition base stroke width; default=0.5 for TEED")
+    parser.add_argument("--precond-max-stroke-width", type=float, default=None, help="Precondition max stroke width; default=1.0 for TEED (clamped to --max_width)")
+    parser.add_argument("--fixed-stroke", action="store_true", help="Fix all stroke colors to black ink (disables color optimization)")
+    parser.add_argument("--fixed-stroke-alpha", type=float, default=0.9, help="Alpha for --fixed-stroke (0..1)")
     parser.add_argument("--loss", type=str, default="mse", help="Loss: mse|l1|lpips|msssim|dists|perceptual-balanced")
     parser.add_argument("--num_iter", type=int, default=500)
     parser.add_argument("--save_svg_every", type=int, default=0, help="Save SVG every N iters (0 disables)")

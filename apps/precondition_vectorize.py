@@ -18,6 +18,18 @@ from PIL import Image
 import pydiffvg
 
 
+def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
+    """Composite RGBA to RGB over white (matches painterly_rendering.py)."""
+    backend = pydiffvg.get_backend()
+    a = img_rgba[:, :, 3:4].clamp(0.0, 1.0)
+    rgb = img_rgba[:, :, :3]
+    if backend == "splat":
+        premul = rgb
+    else:
+        premul = rgb * a
+    return (premul + (1.0 - a)).clamp(0.0, 1.0)
+
+
 def _render(renderer: pydiffvg.Renderer, width: int, height: int, shapes, groups, device, cache_key="main", invalidate=False):
     scene_args = renderer.serialize_scene(
         width,
@@ -36,6 +48,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Precondition raster -> diffvg paths (no optimization).")
     parser.add_argument("image", type=Path, help="Input raster image")
     parser.add_argument("--backend", default="splat", choices=["baseline", "splat"], help="Render backend to use")
+    parser.add_argument("--edge-backend", type=str, default="xdog", choices=["xdog", "teed"], help="Edge backend for preconditioning")
+    parser.add_argument("--teed-weights", type=str, default=None, help="Path to TEED/MTEED weights (.pth) for --edge-backend teed")
+    parser.add_argument("--teed-detect-res", type=int, default=512, help="TEED detect resolution (min side) before rounding to 64-multiple")
+    parser.add_argument("--teed-threshold", type=float, default=0.5, help="Threshold on TEED edge strength (0..1) to form a boolean edge mask")
+    parser.add_argument("--teed-safe-steps", type=int, default=2, help="Quantization steps (controlnet-aux safe_step); 0 disables")
+    parser.add_argument("--max-paths", type=int, default=None, help="Cap number of generated paths (default: config default)")
+    parser.add_argument("--min-path-length", type=int, default=None, help="Minimum skeleton polyline length in pixels")
+    parser.add_argument("--max-path-length", type=int, default=None, help="Maximum skeleton polyline length in pixels (smaller splits long paths)")
+    parser.add_argument("--min-component-area", type=int, default=None, help="Remove edge components smaller than this area (pixels)")
+    parser.add_argument("--morph-open-radius", type=int, default=None, help="Binary opening radius applied to edge mask")
+    parser.add_argument("--morph-close-radius", type=int, default=None, help="Binary closing radius applied to edge mask")
+    parser.add_argument("--base-stroke-width", type=float, default=None, help="Base stroke width for preconditioned paths")
+    parser.add_argument("--max-stroke-width", type=float, default=None, help="Max stroke width for preconditioned paths")
+    parser.add_argument("--fixed-stroke", action="store_true", help="Force all stroke colors to opaque-ish black ink")
+    parser.add_argument("--fixed-stroke-alpha", type=float, default=0.9, help="Alpha used with --fixed-stroke (0..1)")
     parser.add_argument("--out-dir", type=Path, default=Path("results/precondition"), help="Where to write renders/debug outputs")
     args = parser.parse_args()
 
@@ -45,14 +72,51 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = pydiffvg.PreconditionConfig()
+    if args.max_paths is not None:
+        cfg.max_paths = int(args.max_paths)
+    if args.min_path_length is not None:
+        cfg.min_path_length = int(args.min_path_length)
+    if args.max_path_length is not None:
+        cfg.max_path_length = int(args.max_path_length)
+    if args.min_component_area is not None:
+        cfg.min_component_area = int(args.min_component_area)
+    if args.morph_open_radius is not None:
+        cfg.morph_open_radius = int(args.morph_open_radius)
+    if args.morph_close_radius is not None:
+        cfg.morph_close_radius = int(args.morph_close_radius)
+    if args.base_stroke_width is not None:
+        cfg.base_stroke_width = float(args.base_stroke_width)
+    if args.max_stroke_width is not None:
+        cfg.max_stroke_width = float(args.max_stroke_width)
+    if getattr(args, "fixed_stroke", False):
+        alpha = float(getattr(args, "fixed_stroke_alpha", 0.9))
+        cfg.fixed_stroke_rgba = (0.0, 0.0, 0.0, max(0.0, min(1.0, alpha)))
+
+    cfg.edge_backend = args.edge_backend
+    if args.edge_backend == "teed":
+        cfg.teed_weights_path = args.teed_weights
+        cfg.teed_detect_resolution = int(args.teed_detect_res)
+        cfg.teed_threshold = float(args.teed_threshold)
+        cfg.teed_safe_steps = int(args.teed_safe_steps)
+        if cfg.teed_weights_path is None or str(cfg.teed_weights_path).strip() == "":
+            raise ValueError("--edge-backend teed requires --teed-weights PATH")
     scene = pydiffvg.build_preconditioned_scene(args.image, cfg=cfg, backend=args.backend, device=device)
 
     # Debug outputs for the preconditioning stage
     pydiffvg.imwrite(scene.edge_mask.astype(np.float32), str(out_dir / "edge_mask.png"), gamma=1.0)
     pydiffvg.imwrite(scene.skeleton.astype(np.float32), str(out_dir / "skeleton.png"), gamma=1.0)
 
+    if len(scene.shapes) == 0 or len(scene.shape_groups) == 0:
+        print(
+            f"Preconditioning complete but produced 0 paths. "
+            f"Try lowering thresholds (e.g., --teed-threshold) or relaxing cleanup. Outputs in {out_dir}"
+        )
+        return
+
     init_img = _render(scene.renderer, scene.width, scene.height, scene.shapes, scene.shape_groups, device, invalidate=True)
     pydiffvg.imwrite(init_img, str(out_dir / "init_render.png"))
+    init_rgb = _rgba_over_white(init_img)
+    pydiffvg.imwrite(init_rgb, str(out_dir / "init_render_over_white.png"), gamma=1.0)
     print(f"Preconditioning complete: {len(scene.shapes)} paths generated. Outputs in {out_dir}")
 
 
