@@ -9,6 +9,8 @@ full optimization.
 from __future__ import annotations
 
 import argparse
+import sys
+import tomllib
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +18,18 @@ import torch
 from PIL import Image
 
 import pydiffvg
+
+
+def _load_config_defaults(config_path: str, parser: argparse.ArgumentParser) -> dict:
+    with open(config_path, "rb") as handle:
+        data = tomllib.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError("Config must be a TOML table (key/value mapping) at top level.")
+    valid = {action.dest for action in parser._actions if action.dest != "config"}
+    unknown = sorted(key for key in data.keys() if key not in valid)
+    if unknown:
+        raise ValueError(f"Unknown config keys in {config_path}: {', '.join(unknown)}")
+    return data
 
 
 def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
@@ -46,6 +60,7 @@ def _render(renderer: pydiffvg.Renderer, width: int, height: int, shapes, groups
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Precondition raster -> diffvg paths (no optimization).")
+    parser.add_argument("--config", type=str, default=None, help="TOML config file for default arguments")
     parser.add_argument("image", type=Path, help="Input raster image")
     parser.add_argument("--backend", default="splat", choices=["baseline", "splat"], help="Render backend to use")
     parser.add_argument("--edge-backend", type=str, default="xdog", choices=["xdog", "teed"], help="Edge backend for preconditioning")
@@ -64,7 +79,13 @@ def main() -> None:
     parser.add_argument("--fixed-stroke", action="store_true", help="Force all stroke colors to opaque-ish black ink")
     parser.add_argument("--fixed-stroke-alpha", type=float, default=0.9, help="Alpha used with --fixed-stroke (0..1)")
     parser.add_argument("--out-dir", type=Path, default=Path("results/precondition"), help="Where to write renders/debug outputs")
-    args = parser.parse_args()
+
+    argv = sys.argv[1:]
+    known, _ = parser.parse_known_args(argv)
+    if known.config:
+        defaults = _load_config_defaults(known.config, parser)
+        parser.set_defaults(**defaults)
+    args = parser.parse_args(argv)
 
     pydiffvg.set_backend(args.backend)
     device = pydiffvg.get_device()

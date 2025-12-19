@@ -1,0 +1,23 @@
+# Painterly rendering TEED preset.
+# Uses argparse dest names (underscores), not CLI flag names.
+# Positional args like "target" are not set here.
+
+precondition = true
+edge_backend = "teed"
+teed_weights = "weights/teed/5_model.pth"
+teed_detect_res = 512
+teed_threshold = 0.30
+teed_safe_steps = 0
+
+# Precondition cleanup (TEED defaults in painterly_rendering.py)
+precond_min_path_length = 4
+precond_max_path_length = 64
+precond_min_component_area = 0
+precond_morph_open_radius = 0
+precond_morph_close_radius = 0
+precond_base_stroke_width = 0.5
+precond_max_stroke_width = 1.0
+
+# Optional: fixed ink pass (disable color optimization)
+fixed_stroke = false
+fixed_stroke_alpha = 0.9

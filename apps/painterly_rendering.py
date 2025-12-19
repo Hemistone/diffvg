@@ -10,6 +10,8 @@ import argparse
 import math
 import os
 import random
+import sys
+import tomllib
 from pathlib import Path
 
 import pydiffvg
@@ -26,6 +28,18 @@ def _default_teed_weights_path() -> str | None:
     if candidate.is_file():
         return str(candidate)
     return None
+
+
+def _load_config_defaults(config_path: str, parser: argparse.ArgumentParser) -> dict:
+    with open(config_path, "rb") as handle:
+        data = tomllib.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError("Config must be a TOML table (key/value mapping) at top level.")
+    valid = {action.dest for action in parser._actions if action.dest != "config"}
+    unknown = sorted(key for key in data.keys() if key not in valid)
+    if unknown:
+        raise ValueError(f"Unknown config keys in {config_path}: {', '.join(unknown)}")
+    return data
 
 
 def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
@@ -470,8 +484,9 @@ def main(args):
 
     run.make_video()
 
-if __name__ == "__main__":
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default=None, help="TOML config file for default arguments")
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num_paths", type=int, default=512)
     parser.add_argument("--max_width", type=float, default=2.0)
@@ -501,6 +516,16 @@ if __name__ == "__main__":
         default=1,
         help="Save PNG every N iters (1 saves every iter, 0 disables)",
     )
-    parser.add_argument("--use_blob", dest='use_blob', action='store_true')
-    args = parser.parse_args()
+    parser.add_argument("--use_blob", dest="use_blob", action="store_true")
+
+    argv = sys.argv[1:]
+    known, _ = parser.parse_known_args(argv)
+    if known.config:
+        defaults = _load_config_defaults(known.config, parser)
+        parser.set_defaults(**defaults)
+    return parser.parse_args(argv)
+
+
+if __name__ == "__main__":
+    args = _parse_args()
     main(args)

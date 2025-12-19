@@ -1,0 +1,21 @@
+# Precondition-only TEED preset (apps/precondition_vectorize.py).
+# Uses argparse dest names (underscores), not CLI flag names.
+# Positional args like "image" are not set here.
+
+edge_backend = "teed"
+teed_weights = "weights/teed/5_model.pth"
+teed_detect_res = 512
+teed_threshold = 0.50
+teed_safe_steps = 2
+
+# Precondition cleanup
+min_path_length = 12
+max_path_length = 1024
+min_component_area = 24
+morph_open_radius = 1
+morph_close_radius = 1
+base_stroke_width = 1.6
+max_stroke_width = 3.2
+
+fixed_stroke = false
+fixed_stroke_alpha = 0.9
