@@ -11,10 +11,57 @@ from PIL import Image
 
 import pydiffvg
 from .config import PreconditionConfig
+from .edge import compute_edge_mask
 from .skeleton import skeletonize_edges, skeleton_to_polylines
 from .vectorize import polylines_to_paths
-from .xdog import xdog_edges
 from .lineart import build_lineart_scene
+from .teed import teed_edge_strength, teed_mask_from_strength
+
+
+def _teed_autotuned_edges_and_polylines(
+    rgb: np.ndarray,
+    cfg: PreconditionConfig,
+    *,
+    device: torch.device,
+) -> tuple[np.ndarray, np.ndarray, list[list[tuple[int, int]]]]:
+    strength = teed_edge_strength(rgb, cfg, device=device)
+
+    target = int(cfg.max_paths) if cfg.max_paths is not None else 0
+    if target <= 0:
+        edges = teed_mask_from_strength(strength, cfg)
+        skel = skeletonize_edges(edges)
+        polys = skeleton_to_polylines(skel, cfg)
+        return edges, skel, polys
+
+    thr = float(cfg.teed_threshold)
+    thr_min = float(cfg.teed_threshold_min)
+    decay = float(cfg.teed_threshold_decay)
+    trials = int(max(1, cfg.teed_threshold_trials))
+
+    best_edges: np.ndarray | None = None
+    best_skel: np.ndarray | None = None
+    best_polys: list[list[tuple[int, int]]] = []
+
+    for _ in range(trials):
+        thr = max(thr, thr_min)
+        edges = teed_mask_from_strength(strength, cfg, threshold=thr)
+        skel = skeletonize_edges(edges)
+        polys = skeleton_to_polylines(skel, cfg)
+        if len(polys) > len(best_polys):
+            best_edges, best_skel, best_polys = edges, skel, polys
+        if len(polys) >= target:
+            cfg.teed_threshold = thr
+            return edges, skel, polys
+        if thr <= thr_min + 1e-6:
+            break
+        thr *= decay
+
+    if best_edges is None or best_skel is None:
+        best_edges = teed_mask_from_strength(strength, cfg, threshold=thr_min)
+        best_skel = skeletonize_edges(best_edges)
+        best_polys = skeleton_to_polylines(best_skel, cfg)
+    cfg.teed_threshold = thr_min
+    return best_edges, best_skel, best_polys
 
 
 def _load_image(image: str | Path | np.ndarray) -> np.ndarray:
@@ -63,9 +110,12 @@ def build_preconditioned_scene(
         shapes, groups, edge_mask, skeleton = build_lineart_scene(rgb, cfg, device=device)
         polylines: list[list[tuple[int, int]]] = []
     else:
-        edge_mask = xdog_edges(rgb, cfg)
-        skeleton = skeletonize_edges(edge_mask)
-        polylines = skeleton_to_polylines(skeleton, cfg)
+        if (cfg.edge_backend or "xdog").strip().lower() == "teed" and cfg.teed_auto_tune_threshold:
+            edge_mask, skeleton, polylines = _teed_autotuned_edges_and_polylines(rgb, cfg, device=device)
+        else:
+            edge_mask = compute_edge_mask(rgb, cfg, device=device)
+            skeleton = skeletonize_edges(edge_mask)
+            polylines = skeleton_to_polylines(skeleton, cfg)
         shapes, groups = polylines_to_paths(
             polylines,
             rgb,

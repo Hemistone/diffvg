@@ -12,6 +12,9 @@ from dataclasses import dataclass
 
 @dataclass
 class PreconditionConfig:
+    # Edge backend selection (used when mode="xdog")
+    edge_backend: str = "xdog"  # "xdog" or "teed"
+
     # XDoG parameters
     sigma: float = 1.2
     k: float = 1.6
@@ -19,6 +22,16 @@ class PreconditionConfig:
     epsilon: float = 0.01
     phi: float = 10.0
     edge_threshold: float = -0.015  # post-nonlinearity threshold; more negative = fewer edges
+
+    # TEED parameters (used when edge_backend="teed")
+    teed_weights_path: str | None = None
+    teed_detect_resolution: int = 512
+    teed_safe_steps: int = 2
+    teed_threshold: float = 0.5
+    teed_auto_tune_threshold: bool = True
+    teed_threshold_min: float = 0.05
+    teed_threshold_decay: float = 0.85
+    teed_threshold_trials: int = 8
 
     # Edge cleanup
     min_component_area: int = 24
@@ -36,7 +49,9 @@ class PreconditionConfig:
     base_stroke_width: float = 1.6
     max_stroke_width: float = 3.2
     stroke_width_gamma: float = 1.5
+    xdog_stroke_width_scale: float = 0.9
     sample_color: bool = True
+    fixed_stroke_rgba: tuple[float, float, float, float] | None = None
     curve_mode: str = "bezier"  # "polyline" or "bezier"
     catmull_rom_tension: float = 0.5
 

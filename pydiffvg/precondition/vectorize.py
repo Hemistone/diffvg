@@ -129,6 +129,8 @@ def polylines_to_paths(
         luminance = gray[ys, xs]
         darkness = 1.0 - float(luminance.mean())
         width = cfg.base_stroke_width + (cfg.max_stroke_width - cfg.base_stroke_width) * (darkness ** cfg.stroke_width_gamma)
+        if (cfg.edge_backend or "xdog").strip().lower() == "xdog":
+            width *= float(cfg.xdog_stroke_width_scale)
         stroke_width = torch.tensor(width, dtype=torch.float32, device=device)
 
         path = pydiffvg.Path(
@@ -141,12 +143,17 @@ def polylines_to_paths(
         )
         shapes.append(path)
 
-        if cfg.sample_color:
-            rgb = image_rgb[ys, xs].mean(axis=0).astype(np.float32)
-            rgb = np.clip(rgb, 0.0, 1.0)
+        if cfg.fixed_stroke_rgba is not None:
+            rgba = np.array(cfg.fixed_stroke_rgba, dtype=np.float32)
+            rgba = np.clip(rgba, 0.0, 1.0)
+            stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
         else:
-            rgb = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        stroke_color = torch.tensor([rgb[0], rgb[1], rgb[2], 1.0], dtype=torch.float32, device=device)
+            if cfg.sample_color:
+                rgb = image_rgb[ys, xs].mean(axis=0).astype(np.float32)
+                rgb = np.clip(rgb, 0.0, 1.0)
+            else:
+                rgb = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+            stroke_color = torch.tensor([rgb[0], rgb[1], rgb[2], 1.0], dtype=torch.float32, device=device)
 
         group = pydiffvg.ShapeGroup(
             shape_ids=torch.tensor([len(shapes) - 1], dtype=torch.int32, device=device),

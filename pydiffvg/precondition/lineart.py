@@ -199,7 +199,12 @@ def build_lineart_scene(
         if not shapes:
             continue
         # Assign color and stroke group per color
-        stroke_color = torch.tensor([color[0], color[1], color[2], 1.0], dtype=torch.float32, device=device)
+        if cfg.fixed_stroke_rgba is not None:
+            rgba = np.array(cfg.fixed_stroke_rgba, dtype=np.float32)
+            rgba = np.clip(rgba, 0.0, 1.0)
+            stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
+        else:
+            stroke_color = torch.tensor([color[0], color[1], color[2], 1.0], dtype=torch.float32, device=device)
         for s in shapes:
             s.stroke_width = torch.tensor(cfg.base_stroke_width, dtype=torch.float32, device=device)
             all_shapes.append(s)
