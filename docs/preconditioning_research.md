@@ -259,6 +259,18 @@ DrawingBotV3의 Free Path Finding Modules 중 **“Sketch Lines”**가 바로 �
 
 이 정도만 해도 초기 path geometry는 “사진의 에지를 대충 따라가는 stroke set”으로 상당히 근접할 거고, 이후 diffvg/splat이 control point, stroke_width, 색깔만 fine-tuning 하면 됨.
 
+### 3.6 NN 기반 outline/edge: TEED / Anyline(MistoLine)
+
+XDoG/Canny 같은 전통적 edge detector 외에, **NN 기반 edge/outline detector**를 preconditioning의 `edge_mask` 생성기로 사용하는 선택지도 있음.
+
+* **TEED**: 파라미터 수가 매우 작은(58K 수준) CNN edge detector로, 사진에서 “사람 관점의 윤곽선”이 더 안정적으로 잡히는 경우가 많음.([TEED paper][22])
+* **Anyline(MistoLine)**: SDXL 생태계에서 유통되는 프리프로세서로, TEED 계열 edge 결과 + lineart intensity 기반 후처리를 결합해 outline을 보강하는 형태가 흔함.([ComfyUI-Anyline][23])
+
+도입 관점에서는 기존 파이프라인(XDoG → skeleton → polyline → Path)에서 **XDoG를 TEED/Anyline으로 교체**하는 수준으로 시작할 수 있고,
+구현/라이선스/가중치/의존성 이슈는 별도 문서에 정리해두었음:
+
+* `docs/teed_anyline.md`
+
 ---
 
 ## 4. hemistone/diffvg에 끼워 넣을 pre-conditioning 설계 (Python 중심)
@@ -784,6 +796,7 @@ def optimize_from_precondition(image_path: str,
 ### 6.3 향후 확장 아이디어 (선택)
 
 * ETF + FDoG 기반 **coherent line drawing 모드** 추가 (고품질 옵션).([University of Missouri–St. Louis][18])
+* TEED / Anyline(MistoLine) 기반 NN edge/outline을 `edge_mask` 생성기로 도입 (윤곽선 품질 개선, iteration 감소 기대): `docs/teed_anyline.md`
 * DrawingBotV3-style **PFM-like path grower** 구현:
 
   * working/luminance map 사용
@@ -828,3 +841,5 @@ def optimize_from_precondition(image_path: str,
 [19]: https://scikit-image.org/docs/stable/auto_examples/edges/plot_skeleton.html?utm_source=chatgpt.com "Skeletonize — skimage 0.25.2 documentation - scikit-image"
 [20]: https://docs.drawingbotv3.com/en/latest/about.html?utm_source=chatgpt.com "Drawing Bot V3 — Drawing Bot V3 1.6.10 documentation"
 [21]: https://docs.drawingbotv3.com/en/latest/pfms.html?utm_source=chatgpt.com "5. Path Finding Modules — Drawing Bot V3 1.6.10 documentation"
+[22]: https://arxiv.org/abs/2308.06468 "Tiny and Efficient Model for the Edge Detection Generalization (TEED)"
+[23]: https://github.com/TheMistoAI/ComfyUI-Anyline "ComfyUI-Anyline"
