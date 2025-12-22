@@ -21,6 +21,12 @@ import skimage.io
 import torch
 
 from single_utils import create_run_context, log_run_configuration
+from pydiffvg.precondition.cli import (
+    apply_fixed_stroke_config,
+    apply_precondition_cleanup,
+    apply_stroke_widths,
+    apply_teed_settings,
+)
 
 
 def _default_teed_weights_path() -> str | None:
@@ -241,44 +247,55 @@ def main(args):
             raise ValueError("Preconditioning is incompatible with --use_blob (preconditioning generates stroke paths).")
         cfg = pydiffvg.PreconditionConfig()
         cfg.max_paths = num_paths
-        if fixed_stroke:
-            cfg.fixed_stroke_rgba = (0.0, 0.0, 0.0, max(0.0, min(1.0, fixed_stroke_alpha)))
+        apply_fixed_stroke_config(
+            cfg,
+            enabled=fixed_stroke,
+            alpha=fixed_stroke_alpha,
+        )
         if precondition:
             cfg.edge_backend = edge_backend
             if edge_backend == "teed":
-                cfg.teed_weights_path = getattr(args, "teed_weights", None) or _default_teed_weights_path()
-                if cfg.teed_weights_path is None or str(cfg.teed_weights_path).strip() == "":
-                    raise ValueError(
+                apply_teed_settings(
+                    cfg,
+                    weights_path=getattr(args, "teed_weights", None),
+                    default_weights_path=_default_teed_weights_path(),
+                    detect_res=getattr(args, "teed_detect_res", None),
+                    detect_res_default=512,
+                    threshold=getattr(args, "teed_threshold", None),
+                    threshold_default=0.30,
+                    safe_steps=getattr(args, "teed_safe_steps", None),
+                    safe_steps_default=0,
+                    require_weights=True,
+                    missing_weights_message=(
                         "--edge-backend teed requires weights. "
                         "Put them at weights/teed/5_model.pth or pass --teed-weights PATH."
-                    )
-
-                cfg.teed_detect_resolution = int(getattr(args, "teed_detect_res", None) or 512)
-                cfg.teed_safe_steps = int(getattr(args, "teed_safe_steps", None) if getattr(args, "teed_safe_steps", None) is not None else 0)
-                cfg.teed_threshold = float(getattr(args, "teed_threshold", None) if getattr(args, "teed_threshold", None) is not None else 0.30)
-
-                cfg.min_path_length = int(getattr(args, "precond_min_path_length", None) or 4)
-                cfg.max_path_length = int(getattr(args, "precond_max_path_length", None) or 64)
-                cfg.min_component_area = int(getattr(args, "precond_min_component_area", None) or 0)
-                cfg.morph_open_radius = int(getattr(args, "precond_morph_open_radius", None) or 0)
-                cfg.morph_close_radius = int(getattr(args, "precond_morph_close_radius", None) or 0)
-
-                base_w = float(getattr(args, "precond_base_stroke_width", None) or 0.5)
-                max_w = float(getattr(args, "precond_max_stroke_width", None) or 1.0)
-                max_w = min(max_w, max_width)
-                cfg.max_stroke_width = max_w
-                cfg.base_stroke_width = min(base_w, max_w)
+                    ),
+                )
+                apply_precondition_cleanup(
+                    cfg,
+                    min_path_length=int(getattr(args, "precond_min_path_length", None) or 4),
+                    max_path_length=int(getattr(args, "precond_max_path_length", None) or 64),
+                    min_component_area=int(getattr(args, "precond_min_component_area", None) or 0),
+                    morph_open_radius=int(getattr(args, "precond_morph_open_radius", None) or 0),
+                    morph_close_radius=int(getattr(args, "precond_morph_close_radius", None) or 0),
+                )
+                apply_stroke_widths(
+                    cfg,
+                    base_stroke_width=float(getattr(args, "precond_base_stroke_width", None) or 0.5),
+                    max_stroke_width=float(getattr(args, "precond_max_stroke_width", None) or 1.0),
+                    clamp_max_width=max_width,
+                )
             else:
                 # For apples-to-apples comparisons with TEED, keep XDoG defaults
                 # aligned unless the user explicitly overrides them.
-                base_w = float(getattr(args, "precond_base_stroke_width", None) or 0.5)
-                max_w = float(getattr(args, "precond_max_stroke_width", None) or 1.0)
-                max_w = min(max_w, max_width)
-                cfg.max_stroke_width = max_w
-                cfg.base_stroke_width = min(base_w, max_w)
+                apply_stroke_widths(
+                    cfg,
+                    base_stroke_width=float(getattr(args, "precond_base_stroke_width", None) or 0.5),
+                    max_stroke_width=float(getattr(args, "precond_max_stroke_width", None) or 1.0),
+                    clamp_max_width=max_width,
+                )
         else:
-            cfg.max_stroke_width = max_width
-            cfg.base_stroke_width = min(cfg.base_stroke_width, max_width)
+            apply_stroke_widths(cfg, clamp_max_width=max_width)
         if lineart_precondition:
             if precondition and edge_backend != "xdog":
                 print("NOTE: --edge-backend is ignored when using --lineart-precondition.")

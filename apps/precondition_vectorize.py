@@ -18,6 +18,12 @@ import torch
 from PIL import Image
 
 import pydiffvg
+from pydiffvg.precondition.cli import (
+    apply_fixed_stroke_config,
+    apply_precondition_cleanup,
+    apply_stroke_widths,
+    apply_teed_settings,
+)
 
 
 def _load_config_defaults(config_path: str, parser: argparse.ArgumentParser) -> dict:
@@ -93,34 +99,37 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = pydiffvg.PreconditionConfig()
-    if args.max_paths is not None:
-        cfg.max_paths = int(args.max_paths)
-    if args.min_path_length is not None:
-        cfg.min_path_length = int(args.min_path_length)
-    if args.max_path_length is not None:
-        cfg.max_path_length = int(args.max_path_length)
-    if args.min_component_area is not None:
-        cfg.min_component_area = int(args.min_component_area)
-    if args.morph_open_radius is not None:
-        cfg.morph_open_radius = int(args.morph_open_radius)
-    if args.morph_close_radius is not None:
-        cfg.morph_close_radius = int(args.morph_close_radius)
-    if args.base_stroke_width is not None:
-        cfg.base_stroke_width = float(args.base_stroke_width)
-    if args.max_stroke_width is not None:
-        cfg.max_stroke_width = float(args.max_stroke_width)
-    if getattr(args, "fixed_stroke", False):
-        alpha = float(getattr(args, "fixed_stroke_alpha", 0.9))
-        cfg.fixed_stroke_rgba = (0.0, 0.0, 0.0, max(0.0, min(1.0, alpha)))
+    apply_precondition_cleanup(
+        cfg,
+        max_paths=args.max_paths,
+        min_path_length=args.min_path_length,
+        max_path_length=args.max_path_length,
+        min_component_area=args.min_component_area,
+        morph_open_radius=args.morph_open_radius,
+        morph_close_radius=args.morph_close_radius,
+    )
+    apply_stroke_widths(
+        cfg,
+        base_stroke_width=args.base_stroke_width,
+        max_stroke_width=args.max_stroke_width,
+    )
+    apply_fixed_stroke_config(
+        cfg,
+        enabled=getattr(args, "fixed_stroke", False),
+        alpha=getattr(args, "fixed_stroke_alpha", None),
+    )
 
     cfg.edge_backend = args.edge_backend
     if args.edge_backend == "teed":
-        cfg.teed_weights_path = args.teed_weights
-        cfg.teed_detect_resolution = int(args.teed_detect_res)
-        cfg.teed_threshold = float(args.teed_threshold)
-        cfg.teed_safe_steps = int(args.teed_safe_steps)
-        if cfg.teed_weights_path is None or str(cfg.teed_weights_path).strip() == "":
-            raise ValueError("--edge-backend teed requires --teed-weights PATH")
+        apply_teed_settings(
+            cfg,
+            weights_path=args.teed_weights,
+            detect_res=args.teed_detect_res,
+            threshold=args.teed_threshold,
+            safe_steps=args.teed_safe_steps,
+            require_weights=True,
+            missing_weights_message="--edge-backend teed requires --teed-weights PATH",
+        )
     scene = pydiffvg.build_preconditioned_scene(args.image, cfg=cfg, backend=args.backend, device=device)
 
     # Debug outputs for the preconditioning stage
