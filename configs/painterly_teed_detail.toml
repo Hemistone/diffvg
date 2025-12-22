@@ -1,0 +1,20 @@
+# Painterly TEED preset for more detail (denser edges).
+# Uses argparse dest names (underscores), not CLI flag names.
+
+precondition = true
+edge_backend = "teed"
+teed_weights = "weights/teed/5_model.pth"
+teed_detect_res = 768
+teed_threshold = 0.25
+teed_safe_steps = 2
+
+precond_min_path_length = 8
+precond_max_path_length = 192
+precond_min_component_area = 12
+precond_morph_open_radius = 1
+precond_morph_close_radius = 1
+precond_base_stroke_width = 0.5
+precond_max_stroke_width = 1.0
+
+fixed_stroke = false
+fixed_stroke_alpha = 0.9

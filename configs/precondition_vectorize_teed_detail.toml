@@ -1,0 +1,19 @@
+# Precondition-only TEED preset for more detail (denser edges).
+# Uses argparse dest names (underscores), not CLI flag names.
+
+edge_backend = "teed"
+teed_weights = "weights/teed/5_model.pth"
+teed_detect_res = 768
+teed_threshold = 0.30
+teed_safe_steps = 2
+
+min_path_length = 8
+max_path_length = 256
+min_component_area = 12
+morph_open_radius = 1
+morph_close_radius = 1
+base_stroke_width = 1.6
+max_stroke_width = 3.2
+
+fixed_stroke = false
+fixed_stroke_alpha = 0.9

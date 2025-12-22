@@ -24,6 +24,15 @@ Precondition-only debug run:
 python apps/precondition_vectorize.py --config configs/precondition_vectorize_teed.toml imgs/scream.jpg
 ```
 
+## Presets
+
+- `painterly_teed.toml`: baseline TEED defaults for painterly runs.
+- `painterly_teed_detail.toml`: higher detect resolution, lower threshold, longer paths.
+- `painterly_teed_clean.toml`: higher threshold, more cleanup, longer paths.
+- `precondition_vectorize_teed.toml`: baseline TEED defaults for precondition-only debug.
+- `precondition_vectorize_teed_detail.toml`: denser edges for skeleton inspection.
+- `precondition_vectorize_teed_clean.toml`: cleaner edges for skeleton inspection.
+
 ## Notes
 
 - Positional arguments (`target`, `image`) are not set in presets.
