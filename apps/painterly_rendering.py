@@ -23,6 +23,7 @@ import torch
 from single_utils import create_run_context, log_run_configuration
 from pydiffvg.precondition.cli import (
     apply_fixed_stroke_config,
+    apply_pen_widths,
     apply_precondition_cleanup,
     apply_stroke_widths,
     apply_teed_settings,
@@ -79,6 +80,7 @@ def main(args):
     edge_backend = getattr(args, "edge_backend", "xdog").strip().lower()
     fixed_stroke = bool(getattr(args, "fixed_stroke", False))
     fixed_stroke_alpha = float(getattr(args, "fixed_stroke_alpha", 0.9))
+    fixed_stroke_width = getattr(args, "fixed_stroke_width", None)
 
     # Build loss function
     device = pydiffvg.get_device()
@@ -201,6 +203,7 @@ def main(args):
         "edge_backend": edge_backend if precondition else None,
         "fixed_stroke": fixed_stroke if not args.use_blob else None,
         "fixed_stroke_alpha": fixed_stroke_alpha if (fixed_stroke and not args.use_blob) else None,
+        "fixed_stroke_width": fixed_stroke_width if not args.use_blob else None,
         "target": str(target_path),
         "canvas": f"{canvas_width}x{canvas_height}",
         "paths": num_paths,
@@ -223,6 +226,9 @@ def main(args):
         config_items["precond_morph_open_radius"] = getattr(args, "precond_morph_open_radius", None)
         config_items["precond_morph_close_radius"] = getattr(args, "precond_morph_close_radius", None)
     if precondition or lineart_precondition:
+        config_items["stroke_width_mode"] = getattr(args, "stroke_width_mode", None)
+        config_items["pen_width_min_mm"] = getattr(args, "pen_width_min_mm", None)
+        config_items["pen_width_max_mm"] = getattr(args, "pen_width_max_mm", None)
         config_items["precond_base_stroke_width"] = getattr(args, "precond_base_stroke_width", None)
         config_items["precond_max_stroke_width"] = getattr(args, "precond_max_stroke_width", None)
     if pydiffvg.get_backend() == "splat":
@@ -250,6 +256,12 @@ def main(args):
             raise ValueError("Preconditioning is incompatible with --use_blob (preconditioning generates stroke paths).")
         cfg = pydiffvg.PreconditionConfig()
         cfg.max_paths = num_paths
+        apply_pen_widths(
+            cfg,
+            stroke_width_mode=getattr(args, "stroke_width_mode", None),
+            pen_min_mm=getattr(args, "pen_width_min_mm", None),
+            pen_max_mm=getattr(args, "pen_width_max_mm", None),
+        )
         apply_fixed_stroke_config(
             cfg,
             enabled=fixed_stroke,
@@ -286,8 +298,8 @@ def main(args):
                 )
                 apply_stroke_widths(
                     cfg,
-                    base_stroke_width=float(getattr(args, "precond_base_stroke_width", None) or 0.5),
-                    max_stroke_width=float(getattr(args, "precond_max_stroke_width", None) or 1.0),
+                    base_stroke_width=getattr(args, "precond_base_stroke_width", None),
+                    max_stroke_width=getattr(args, "precond_max_stroke_width", None),
                     clamp_max_width=max_width,
                 )
             else:
@@ -295,8 +307,8 @@ def main(args):
                 # aligned unless the user explicitly overrides them.
                 apply_stroke_widths(
                     cfg,
-                    base_stroke_width=float(getattr(args, "precond_base_stroke_width", None) or 0.5),
-                    max_stroke_width=float(getattr(args, "precond_max_stroke_width", None) or 1.0),
+                    base_stroke_width=getattr(args, "precond_base_stroke_width", None),
+                    max_stroke_width=getattr(args, "precond_max_stroke_width", None),
                     clamp_max_width=max_width,
                 )
         else:
@@ -407,13 +419,21 @@ def main(args):
     init_rgb = _rgba_over_white(img)
     pydiffvg.imwrite(init_rgb.cpu(), str(run.results_dir / "init.png"), gamma=gamma)
 
+    if fixed_stroke_width is not None and not args.use_blob:
+        fixed_w = float(fixed_stroke_width)
+        if fixed_w <= 0:
+            raise ValueError("--fixed-stroke-width must be > 0.")
+        fixed_w = min(fixed_w, max_width)
+        for path in shapes:
+            path.stroke_width = torch.tensor(fixed_w, device=device)
+
     points_vars = []
     stroke_width_vars = []
     color_vars = []
     for path in shapes:
         path.points.requires_grad = True
         points_vars.append(path.points)
-    if not args.use_blob:
+    if not args.use_blob and fixed_stroke_width is None:
         for path in shapes:
             path.stroke_width.requires_grad = True
             stroke_width_vars.append(path.stroke_width)
@@ -522,6 +542,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--teed-safe-steps", type=int, default=None, help="Quantization steps; default=0 for TEED runs")
     parser.add_argument("--teed-threshold-mode", type=str, default=None, choices=["fixed", "hysteresis"], help="TEED thresholding mode")
     parser.add_argument("--teed-hysteresis-low-ratio", type=float, default=None, help="Hysteresis low/high ratio (default=0.5)")
+    parser.add_argument("--stroke-width-mode", type=str, default=None, choices=["absolute", "a4_pen"], help="Stroke width mode for preconditioning")
+    parser.add_argument("--pen-width-min-mm", type=float, default=None, help="A4 pen min width in mm (default=0.35)")
+    parser.add_argument("--pen-width-max-mm", type=float, default=None, help="A4 pen max width in mm (default=0.8)")
     parser.add_argument("--precond-min-path-length", type=int, default=None, help="Preconditioning min skeleton polyline length; default=4 for TEED")
     parser.add_argument("--precond-max-path-length", type=int, default=None, help="Preconditioning max skeleton polyline length; default=64 for TEED")
     parser.add_argument("--precond-min-component-area", type=int, default=None, help="Remove edge components smaller than this area; default=0 for TEED")
@@ -531,6 +554,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--precond-max-stroke-width", type=float, default=None, help="Precondition max stroke width; default=1.0 for TEED (clamped to --max_width)")
     parser.add_argument("--fixed-stroke", action="store_true", help="Fix all stroke colors to black ink (disables color optimization)")
     parser.add_argument("--fixed-stroke-alpha", type=float, default=0.9, help="Alpha for --fixed-stroke (0..1)")
+    parser.add_argument("--fixed-stroke-width", type=float, default=None, help="Fix all stroke widths to a constant (disables width optimization)")
     parser.add_argument("--loss", type=str, default="mse", help="Loss: mse|l1|lpips|msssim|dists|perceptual-balanced")
     parser.add_argument("--num_iter", type=int, default=500)
     parser.add_argument("--save_svg_every", type=int, default=0, help="Save SVG every N iters (0 disables)")

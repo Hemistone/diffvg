@@ -18,6 +18,31 @@ from .lineart import build_lineart_scene
 from .teed import teed_edge_strength, teed_mask_from_strength
 
 
+def _apply_stroke_width_mode(cfg: PreconditionConfig, width: int, height: int) -> None:
+    mode = (cfg.stroke_width_mode or "absolute").strip().lower()
+    if mode == "absolute":
+        return
+    if mode != "a4_pen":
+        raise ValueError(f"Unsupported stroke_width_mode '{cfg.stroke_width_mode}'. Choose from: absolute, a4_pen")
+
+    if width <= 0 or height <= 0:
+        return
+
+    if width >= height:
+        a4_w_mm, a4_h_mm = 297.0, 210.0
+    else:
+        a4_w_mm, a4_h_mm = 210.0, 297.0
+
+    px_per_mm = min(width / a4_w_mm, height / a4_h_mm)
+    min_mm = max(0.0, float(cfg.stroke_width_pen_min_mm))
+    max_mm = max(0.0, float(cfg.stroke_width_pen_max_mm))
+    if max_mm < min_mm:
+        max_mm = min_mm
+
+    cfg.base_stroke_width = min_mm * px_per_mm
+    cfg.max_stroke_width = max_mm * px_per_mm
+
+
 def _teed_autotuned_edges_and_polylines(
     rgb: np.ndarray,
     cfg: PreconditionConfig,
@@ -106,6 +131,7 @@ def build_preconditioned_scene(
 
     rgb = _load_image(image)
     height, width = rgb.shape[0], rgb.shape[1]
+    _apply_stroke_width_mode(cfg, width, height)
     if cfg.mode == "lineart":
         shapes, groups, edge_mask, skeleton = build_lineart_scene(rgb, cfg, device=device)
         polylines: list[list[tuple[int, int]]] = []

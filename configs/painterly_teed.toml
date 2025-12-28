@@ -15,8 +15,9 @@ precond_max_path_length = 64
 precond_min_component_area = 0
 precond_morph_open_radius = 0
 precond_morph_close_radius = 0
-precond_base_stroke_width = 0.5
-precond_max_stroke_width = 1.0
+stroke_width_mode = "a4_pen"
+pen_width_min_mm = 0.35
+pen_width_max_mm = 0.8
 
 # Optional: fixed ink pass (disable color optimization)
 fixed_stroke = false

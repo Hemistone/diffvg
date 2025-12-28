@@ -61,12 +61,29 @@ def apply_stroke_widths(
 ) -> None:
     if base_stroke_width is None and max_stroke_width is None and clamp_max_width is None:
         return
+    if base_stroke_width is not None or max_stroke_width is not None:
+        cfg.stroke_width_mode = "absolute"
     base = cfg.base_stroke_width if base_stroke_width is None else float(base_stroke_width)
     max_w = cfg.max_stroke_width if max_stroke_width is None else float(max_stroke_width)
     if clamp_max_width is not None:
         max_w = min(max_w, float(clamp_max_width))
     cfg.max_stroke_width = max_w
     cfg.base_stroke_width = min(base, max_w)
+
+
+def apply_pen_widths(
+    cfg: PreconditionConfig,
+    *,
+    stroke_width_mode: str | None = None,
+    pen_min_mm: float | None = None,
+    pen_max_mm: float | None = None,
+) -> None:
+    if stroke_width_mode is not None:
+        cfg.stroke_width_mode = str(stroke_width_mode)
+    if pen_min_mm is not None:
+        cfg.stroke_width_pen_min_mm = float(pen_min_mm)
+    if pen_max_mm is not None:
+        cfg.stroke_width_pen_max_mm = float(pen_max_mm)
 
 
 def apply_teed_settings(
@@ -123,6 +140,7 @@ def apply_teed_settings(
 
 __all__ = [
     "apply_fixed_stroke_config",
+    "apply_pen_widths",
     "apply_precondition_cleanup",
     "apply_stroke_widths",
     "apply_teed_settings",

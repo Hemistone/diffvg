@@ -48,6 +48,9 @@ class PreconditionConfig:
     smooth_window: int = 5
 
     # Stroke shaping
+    stroke_width_mode: str = "a4_pen"  # "absolute" or "a4_pen"
+    stroke_width_pen_min_mm: float = 0.35
+    stroke_width_pen_max_mm: float = 0.8
     base_stroke_width: float = 1.6
     max_stroke_width: float = 3.2
     stroke_width_gamma: float = 1.5

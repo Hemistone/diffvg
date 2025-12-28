@@ -20,6 +20,7 @@ from PIL import Image
 import pydiffvg
 from pydiffvg.precondition.cli import (
     apply_fixed_stroke_config,
+    apply_pen_widths,
     apply_precondition_cleanup,
     apply_stroke_widths,
     apply_teed_settings,
@@ -76,6 +77,9 @@ def main() -> None:
     parser.add_argument("--teed-safe-steps", type=int, default=2, help="Quantization steps (controlnet-aux safe_step); 0 disables")
     parser.add_argument("--teed-threshold-mode", type=str, default=None, choices=["fixed", "hysteresis"], help="TEED thresholding mode")
     parser.add_argument("--teed-hysteresis-low-ratio", type=float, default=None, help="Hysteresis low/high ratio (default=0.5)")
+    parser.add_argument("--stroke-width-mode", type=str, default=None, choices=["absolute", "a4_pen"], help="Stroke width mode for preconditioning")
+    parser.add_argument("--pen-width-min-mm", type=float, default=None, help="A4 pen min width in mm (default=0.35)")
+    parser.add_argument("--pen-width-max-mm", type=float, default=None, help="A4 pen max width in mm (default=0.8)")
     parser.add_argument("--max-paths", type=int, default=None, help="Cap number of generated paths (default: config default)")
     parser.add_argument("--min-path-length", type=int, default=None, help="Minimum skeleton polyline length in pixels")
     parser.add_argument("--max-path-length", type=int, default=None, help="Maximum skeleton polyline length in pixels (smaller splits long paths)")
@@ -101,6 +105,12 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = pydiffvg.PreconditionConfig()
+    apply_pen_widths(
+        cfg,
+        stroke_width_mode=getattr(args, "stroke_width_mode", None),
+        pen_min_mm=getattr(args, "pen_width_min_mm", None),
+        pen_max_mm=getattr(args, "pen_width_max_mm", None),
+    )
     apply_precondition_cleanup(
         cfg,
         max_paths=args.max_paths,

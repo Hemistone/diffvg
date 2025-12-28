@@ -14,8 +14,9 @@ max_path_length = 1024
 min_component_area = 24
 morph_open_radius = 1
 morph_close_radius = 1
-base_stroke_width = 1.6
-max_stroke_width = 3.2
+stroke_width_mode = "a4_pen"
+pen_width_min_mm = 0.35
+pen_width_max_mm = 0.8
 
 fixed_stroke = false
 fixed_stroke_alpha = 0.9
