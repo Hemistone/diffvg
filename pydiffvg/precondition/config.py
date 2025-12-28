@@ -28,6 +28,8 @@ class PreconditionConfig:
     teed_detect_resolution: int = 512
     teed_safe_steps: int = 2
     teed_threshold: float = 0.5
+    teed_threshold_mode: str = "fixed"  # "fixed" or "hysteresis"
+    teed_hysteresis_low_ratio: float = 0.5
     teed_auto_tune_threshold: bool = True
     teed_threshold_min: float = 0.05
     teed_threshold_decay: float = 0.85

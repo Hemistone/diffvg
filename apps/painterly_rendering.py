@@ -215,11 +215,14 @@ def main(args):
         config_items["teed_detect_res"] = getattr(args, "teed_detect_res", None)
         config_items["teed_threshold"] = getattr(args, "teed_threshold", None)
         config_items["teed_safe_steps"] = getattr(args, "teed_safe_steps", None)
+        config_items["teed_threshold_mode"] = getattr(args, "teed_threshold_mode", None)
+        config_items["teed_hysteresis_low_ratio"] = getattr(args, "teed_hysteresis_low_ratio", None)
         config_items["precond_min_path_length"] = getattr(args, "precond_min_path_length", None)
         config_items["precond_max_path_length"] = getattr(args, "precond_max_path_length", None)
         config_items["precond_min_component_area"] = getattr(args, "precond_min_component_area", None)
         config_items["precond_morph_open_radius"] = getattr(args, "precond_morph_open_radius", None)
         config_items["precond_morph_close_radius"] = getattr(args, "precond_morph_close_radius", None)
+    if precondition or lineart_precondition:
         config_items["precond_base_stroke_width"] = getattr(args, "precond_base_stroke_width", None)
         config_items["precond_max_stroke_width"] = getattr(args, "precond_max_stroke_width", None)
     if pydiffvg.get_backend() == "splat":
@@ -265,6 +268,8 @@ def main(args):
                     threshold_default=0.30,
                     safe_steps=getattr(args, "teed_safe_steps", None),
                     safe_steps_default=0,
+                    threshold_mode=getattr(args, "teed_threshold_mode", None),
+                    hysteresis_low_ratio=getattr(args, "teed_hysteresis_low_ratio", None),
                     require_weights=True,
                     missing_weights_message=(
                         "--edge-backend teed requires weights. "
@@ -515,6 +520,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--teed-detect-res", type=int, default=None, help="TEED detect resolution (min side); default=512 for TEED runs")
     parser.add_argument("--teed-threshold", type=float, default=None, help="TEED threshold (0..1); default=0.30 for TEED runs")
     parser.add_argument("--teed-safe-steps", type=int, default=None, help="Quantization steps; default=0 for TEED runs")
+    parser.add_argument("--teed-threshold-mode", type=str, default=None, choices=["fixed", "hysteresis"], help="TEED thresholding mode")
+    parser.add_argument("--teed-hysteresis-low-ratio", type=float, default=None, help="Hysteresis low/high ratio (default=0.5)")
     parser.add_argument("--precond-min-path-length", type=int, default=None, help="Preconditioning min skeleton polyline length; default=4 for TEED")
     parser.add_argument("--precond-max-path-length", type=int, default=None, help="Preconditioning max skeleton polyline length; default=64 for TEED")
     parser.add_argument("--precond-min-component-area", type=int, default=None, help="Remove edge components smaller than this area; default=0 for TEED")

@@ -138,6 +138,10 @@ Anyline을 “바로 통째로” 붙이기보다, 아래 순서로 가는 편�
   * 목표 “iteration 감소”가 실제로 발생하는지(예: 500 → 150~200)
   * path 수/길이 분포가 skeleton graph에 어떻게 영향을 주는지
   * splat fallback 비율(unsupported path 비율)이 늘지는 않는지
+* TEED threshold mode:
+  * `fixed`: 기존처럼 단일 threshold로 edge mask 생성
+  * `hysteresis`: high/low threshold를 사용해 연결된 약한 edge를 보존
+  * CLI 예시: `--teed-threshold-mode hysteresis --teed-hysteresis-low-ratio 0.5`
 * thresholding 전략:
   * 고정 threshold vs quantile/otsu 기반 threshold
   * morphology 파라미터(min_component_area/open/close)가 skeleton 품질에 미치는 영향

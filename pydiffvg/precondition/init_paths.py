@@ -110,7 +110,11 @@ def build_preconditioned_scene(
         shapes, groups, edge_mask, skeleton = build_lineart_scene(rgb, cfg, device=device)
         polylines: list[list[tuple[int, int]]] = []
     else:
-        if (cfg.edge_backend or "xdog").strip().lower() == "teed" and cfg.teed_auto_tune_threshold:
+        if (
+            (cfg.edge_backend or "xdog").strip().lower() == "teed"
+            and cfg.teed_auto_tune_threshold
+            and (cfg.teed_threshold_mode or "fixed").strip().lower() == "fixed"
+        ):
             edge_mask, skeleton, polylines = _teed_autotuned_edges_and_polylines(rgb, cfg, device=device)
         else:
             edge_mask = compute_edge_mask(rgb, cfg, device=device)

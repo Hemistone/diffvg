@@ -74,6 +74,8 @@ def main() -> None:
     parser.add_argument("--teed-detect-res", type=int, default=512, help="TEED detect resolution (min side) before rounding to 64-multiple")
     parser.add_argument("--teed-threshold", type=float, default=0.5, help="Threshold on TEED edge strength (0..1) to form a boolean edge mask")
     parser.add_argument("--teed-safe-steps", type=int, default=2, help="Quantization steps (controlnet-aux safe_step); 0 disables")
+    parser.add_argument("--teed-threshold-mode", type=str, default=None, choices=["fixed", "hysteresis"], help="TEED thresholding mode")
+    parser.add_argument("--teed-hysteresis-low-ratio", type=float, default=None, help="Hysteresis low/high ratio (default=0.5)")
     parser.add_argument("--max-paths", type=int, default=None, help="Cap number of generated paths (default: config default)")
     parser.add_argument("--min-path-length", type=int, default=None, help="Minimum skeleton polyline length in pixels")
     parser.add_argument("--max-path-length", type=int, default=None, help="Maximum skeleton polyline length in pixels (smaller splits long paths)")
@@ -127,6 +129,8 @@ def main() -> None:
             detect_res=args.teed_detect_res,
             threshold=args.teed_threshold,
             safe_steps=args.teed_safe_steps,
+            threshold_mode=getattr(args, "teed_threshold_mode", None),
+            hysteresis_low_ratio=getattr(args, "teed_hysteresis_low_ratio", None),
             require_weights=True,
             missing_weights_message="--edge-backend teed requires --teed-weights PATH",
         )

@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
-from skimage import morphology
+from skimage import filters, morphology
 
 from .config import PreconditionConfig
 
@@ -299,8 +299,18 @@ def teed_mask_from_strength(
     threshold: float | None = None,
 ) -> np.ndarray:
     """Convert an edge strength map in [0,1] to a boolean edge mask."""
-    thr = float(cfg.teed_threshold if threshold is None else threshold)
-    edges = np.asarray(strength, dtype=np.float32) >= thr
+    mode = (cfg.teed_threshold_mode or "fixed").strip().lower()
+    if mode == "fixed":
+        thr = float(cfg.teed_threshold if threshold is None else threshold)
+        edges = np.asarray(strength, dtype=np.float32) >= thr
+    elif mode == "hysteresis":
+        high = float(cfg.teed_threshold if threshold is None else threshold)
+        low_ratio = float(cfg.teed_hysteresis_low_ratio)
+        low = max(0.0, min(1.0, high * low_ratio))
+        high = max(0.0, min(1.0, high))
+        edges = filters.apply_hysteresis_threshold(np.asarray(strength, dtype=np.float32), low, high)
+    else:
+        raise ValueError(f"Unsupported teed_threshold_mode '{cfg.teed_threshold_mode}'. Choose from: fixed, hysteresis")
 
     if cfg.min_component_area > 0:
         edges = morphology.remove_small_objects(edges, cfg.min_component_area)

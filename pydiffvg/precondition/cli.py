@@ -80,6 +80,10 @@ def apply_teed_settings(
     threshold_default: float | None = None,
     safe_steps: int | None = None,
     safe_steps_default: int | None = None,
+    threshold_mode: str | None = None,
+    threshold_mode_default: str | None = None,
+    hysteresis_low_ratio: float | None = None,
+    hysteresis_low_ratio_default: float | None = None,
     require_weights: bool = False,
     missing_weights_message: str | None = None,
 ) -> None:
@@ -101,6 +105,16 @@ def apply_teed_settings(
         safe_steps = safe_steps_default
     if safe_steps is not None:
         cfg.teed_safe_steps = int(safe_steps)
+
+    if threshold_mode is None:
+        threshold_mode = threshold_mode_default
+    if threshold_mode is not None:
+        cfg.teed_threshold_mode = str(threshold_mode)
+
+    if hysteresis_low_ratio is None:
+        hysteresis_low_ratio = hysteresis_low_ratio_default
+    if hysteresis_low_ratio is not None:
+        cfg.teed_hysteresis_low_ratio = float(hysteresis_low_ratio)
 
     if require_weights and (cfg.teed_weights_path is None or str(cfg.teed_weights_path).strip() == ""):
         message = missing_weights_message or "TEED edge backend requires weights. Provide a .pth path."
