@@ -18,18 +18,28 @@ Painterly rendering (full optimization):
 python apps/painterly_rendering.py --config configs/painterly_teed.toml imgs/scream.jpg
 ```
 
+Note: `apps/painterly_rendering.py` defaults to
+`configs/painterly_teed_detail_quantile.toml` when `--config` is omitted.
+
 Precondition-only debug run:
 
 ```bash
 python apps/precondition_vectorize.py --config configs/precondition_vectorize_teed.toml imgs/scream.jpg
 ```
 
+Note: `apps/precondition_vectorize.py` defaults to
+`configs/precondition_vectorize_teed_detail_quantile.toml` when `--config` is omitted.
+
 ## Presets
 
 - `painterly_teed.toml`: baseline TEED defaults for painterly runs.
 - `painterly_teed_detail.toml`: higher detect resolution, lower threshold, longer paths.
+- `painterly_teed_detail_quantile.toml`: detail preset using quantile thresholding.
+- `painterly_teed_detail_otsu.toml`: detail preset using Otsu thresholding.
 - `precondition_vectorize_teed.toml`: baseline TEED defaults for precondition-only debug.
 - `precondition_vectorize_teed_detail.toml`: denser edges for skeleton inspection.
+- `precondition_vectorize_teed_detail_quantile.toml`: detail preset using quantile thresholding.
+- `precondition_vectorize_teed_detail_otsu.toml`: detail preset using Otsu thresholding.
 
 ## Notes
 

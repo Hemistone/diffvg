@@ -69,7 +69,8 @@ def _render(renderer: pydiffvg.Renderer, width: int, height: int, shapes, groups
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Precondition raster -> diffvg paths (no optimization).")
-    parser.add_argument("--config", type=str, default=None, help="TOML config file for default arguments")
+    default_config = "configs/precondition_vectorize_teed_detail_quantile.toml"
+    parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
     parser.add_argument("image", type=Path, help="Input raster image")
     parser.add_argument("--backend", default="splat", choices=["baseline", "splat"], help="Render backend to use")
     parser.add_argument("--edge-backend", type=str, default="xdog", choices=["xdog", "teed"], help="Edge backend for preconditioning")

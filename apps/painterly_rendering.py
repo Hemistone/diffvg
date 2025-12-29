@@ -572,7 +572,8 @@ def main(args):
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default=None, help="TOML config file for default arguments")
+    default_config = "configs/painterly_teed_detail_quantile.toml"
+    parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num_paths", type=int, default=512)
     parser.add_argument("--max_width", type=float, default=2.0)
