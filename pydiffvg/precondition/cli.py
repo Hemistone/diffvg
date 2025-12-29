@@ -52,6 +52,37 @@ def apply_precondition_cleanup(
         cfg.morph_close_radius = int(morph_close_radius)
 
 
+def apply_precondition_scaling(
+    cfg: PreconditionConfig,
+    *,
+    target_paths_min: int | None = None,
+    target_paths_max: int | None = None,
+) -> None:
+    # Keep CLI surface minimal: only target path range is user-tunable.
+    if target_paths_min is not None:
+        cfg.precondition_target_paths_min = int(target_paths_min)
+    if target_paths_max is not None:
+        cfg.precondition_target_paths_max = int(target_paths_max)
+
+
+def apply_polyline_settings(
+    cfg: PreconditionConfig,
+    *,
+    merge_polylines: bool | None = None,
+    merge_distance: float | None = None,
+    merge_angle_deg: float | None = None,
+    force_open_paths: bool | None = None,
+) -> None:
+    if merge_polylines is not None:
+        cfg.merge_polylines = bool(merge_polylines)
+    if merge_distance is not None:
+        cfg.merge_distance = float(merge_distance)
+    if merge_angle_deg is not None:
+        cfg.merge_angle_deg = float(merge_angle_deg)
+    if force_open_paths is not None:
+        cfg.force_open_paths = bool(force_open_paths)
+
+
 def apply_stroke_widths(
     cfg: PreconditionConfig,
     *,
@@ -101,6 +132,16 @@ def apply_teed_settings(
     threshold_mode_default: str | None = None,
     hysteresis_low_ratio: float | None = None,
     hysteresis_low_ratio_default: float | None = None,
+    threshold_quantile: float | None = None,
+    threshold_quantile_default: float | None = None,
+    lineart_enabled: bool | None = None,
+    lineart_enabled_default: bool | None = None,
+    lineart_blur_sigma: float | None = None,
+    lineart_blur_sigma_default: float | None = None,
+    lineart_strength: float | None = None,
+    lineart_strength_default: float | None = None,
+    lineart_combine: str | None = None,
+    lineart_combine_default: str | None = None,
     require_weights: bool = False,
     missing_weights_message: str | None = None,
 ) -> None:
@@ -133,6 +174,31 @@ def apply_teed_settings(
     if hysteresis_low_ratio is not None:
         cfg.teed_hysteresis_low_ratio = float(hysteresis_low_ratio)
 
+    if threshold_quantile is None:
+        threshold_quantile = threshold_quantile_default
+    if threshold_quantile is not None:
+        cfg.teed_threshold_quantile = float(threshold_quantile)
+
+    if lineart_enabled is None:
+        lineart_enabled = lineart_enabled_default
+    if lineart_enabled is not None:
+        cfg.teed_lineart = bool(lineart_enabled)
+
+    if lineart_blur_sigma is None:
+        lineart_blur_sigma = lineart_blur_sigma_default
+    if lineart_blur_sigma is not None:
+        cfg.teed_lineart_blur_sigma = float(lineart_blur_sigma)
+
+    if lineart_strength is None:
+        lineart_strength = lineart_strength_default
+    if lineart_strength is not None:
+        cfg.teed_lineart_strength = float(lineart_strength)
+
+    if lineart_combine is None:
+        lineart_combine = lineart_combine_default
+    if lineart_combine is not None:
+        cfg.teed_lineart_combine = str(lineart_combine)
+
     if require_weights and (cfg.teed_weights_path is None or str(cfg.teed_weights_path).strip() == ""):
         message = missing_weights_message or "TEED edge backend requires weights. Provide a .pth path."
         raise ValueError(message)
@@ -140,6 +206,8 @@ def apply_teed_settings(
 
 __all__ = [
     "apply_fixed_stroke_config",
+    "apply_precondition_scaling",
+    "apply_polyline_settings",
     "apply_pen_widths",
     "apply_precondition_cleanup",
     "apply_stroke_widths",

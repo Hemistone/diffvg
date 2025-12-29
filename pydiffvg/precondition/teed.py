@@ -256,6 +256,42 @@ def _safe_step(x: torch.Tensor, steps: int) -> torch.Tensor:
     return y.clamp(0.0, 1.0)
 
 
+def _normalize_rgb(image_rgb: np.ndarray) -> np.ndarray:
+    rgb = np.asarray(image_rgb[..., :3], dtype=np.float32)
+    if rgb.max() > 1.5:
+        rgb = rgb / 255.0
+    return np.clip(rgb, 0.0, 1.0)
+
+
+def _lineart_intensity(image_rgb: np.ndarray, cfg: PreconditionConfig) -> np.ndarray:
+    gray = _normalize_rgb(image_rgb).mean(axis=2)
+    sigma = max(0.0, float(cfg.teed_lineart_blur_sigma))
+    if sigma <= 0:
+        blur = gray
+    else:
+        blur = filters.gaussian(gray, sigma=sigma, mode="reflect", preserve_range=True)
+    line = np.clip(blur - gray, 0.0, 1.0)
+    strength = max(0.0, float(cfg.teed_lineart_strength))
+    if strength != 1.0:
+        line = np.clip(line * strength, 0.0, 1.0)
+    return line.astype(np.float32, copy=False)
+
+
+def _combine_lineart(strength: np.ndarray, lineart: np.ndarray, cfg: PreconditionConfig) -> np.ndarray:
+    mode = (cfg.teed_lineart_combine or "screen").strip().lower()
+    if mode == "screen":
+        combined = 1.0 - (1.0 - strength) * (1.0 - lineart)
+    elif mode == "max":
+        combined = np.maximum(strength, lineart)
+    elif mode == "add":
+        combined = strength + lineart
+    else:
+        raise ValueError(
+            f"Unsupported teed_lineart_combine '{cfg.teed_lineart_combine}'. Choose from: screen, max, add"
+        )
+    return np.clip(combined, 0.0, 1.0)
+
+
 def teed_edge_strength(
     image_rgb: np.ndarray,
     cfg: PreconditionConfig,
@@ -290,7 +326,14 @@ def teed_edge_strength(
         prob = _safe_step(prob, int(cfg.teed_safe_steps))
         prob = F.interpolate(prob, size=(orig_h, orig_w), mode="bilinear", align_corners=False)
         out = prob[0, 0].detach().cpu().numpy().astype(np.float32, copy=False)
-    return np.clip(out, 0.0, 1.0)
+    out = np.clip(out, 0.0, 1.0)
+    if cfg.teed_lineart:
+        lineart = _lineart_intensity(image_rgb, cfg)
+        if lineart.shape != out.shape:
+            raise ValueError(f"lineart intensity shape mismatch: {lineart.shape} vs {out.shape}")
+        out = _combine_lineart(out, lineart, cfg)
+    return out
+
 
 def teed_mask_from_strength(
     strength: np.ndarray,
@@ -300,17 +343,32 @@ def teed_mask_from_strength(
 ) -> np.ndarray:
     """Convert an edge strength map in [0,1] to a boolean edge mask."""
     mode = (cfg.teed_threshold_mode or "fixed").strip().lower()
+    strength = np.asarray(strength, dtype=np.float32)
     if mode == "fixed":
         thr = float(cfg.teed_threshold if threshold is None else threshold)
-        edges = np.asarray(strength, dtype=np.float32) >= thr
+        edges = strength >= thr
     elif mode == "hysteresis":
         high = float(cfg.teed_threshold if threshold is None else threshold)
         low_ratio = float(cfg.teed_hysteresis_low_ratio)
         low = max(0.0, min(1.0, high * low_ratio))
         high = max(0.0, min(1.0, high))
-        edges = filters.apply_hysteresis_threshold(np.asarray(strength, dtype=np.float32), low, high)
+        edges = filters.apply_hysteresis_threshold(strength, low, high)
+    elif mode == "quantile":
+        q = float(cfg.teed_threshold_quantile if threshold is None else threshold)
+        q = max(0.0, min(1.0, q))
+        thr = float(np.quantile(strength, q))
+        edges = strength >= thr
+    elif mode == "otsu":
+        if np.allclose(strength, strength.flat[0]):
+            thr = float(strength.flat[0])
+        else:
+            thr = float(filters.threshold_otsu(strength))
+        edges = strength >= thr
     else:
-        raise ValueError(f"Unsupported teed_threshold_mode '{cfg.teed_threshold_mode}'. Choose from: fixed, hysteresis")
+        raise ValueError(
+            f"Unsupported teed_threshold_mode '{cfg.teed_threshold_mode}'. "
+            "Choose from: fixed, hysteresis, quantile, otsu"
+        )
 
     if cfg.min_component_area > 0:
         edges = morphology.remove_small_objects(edges, cfg.min_component_area)

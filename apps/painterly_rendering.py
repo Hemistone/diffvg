@@ -24,6 +24,8 @@ from single_utils import create_run_context, log_run_configuration
 from pydiffvg.precondition.cli import (
     apply_fixed_stroke_config,
     apply_pen_widths,
+    apply_precondition_scaling,
+    apply_polyline_settings,
     apply_precondition_cleanup,
     apply_stroke_widths,
     apply_teed_settings,
@@ -220,6 +222,11 @@ def main(args):
         config_items["teed_safe_steps"] = getattr(args, "teed_safe_steps", None)
         config_items["teed_threshold_mode"] = getattr(args, "teed_threshold_mode", None)
         config_items["teed_hysteresis_low_ratio"] = getattr(args, "teed_hysteresis_low_ratio", None)
+        config_items["teed_threshold_quantile"] = getattr(args, "teed_threshold_quantile", None)
+        config_items["teed_lineart"] = getattr(args, "teed_lineart", None)
+        config_items["teed_lineart_blur_sigma"] = getattr(args, "teed_lineart_blur_sigma", None)
+        config_items["teed_lineart_strength"] = getattr(args, "teed_lineart_strength", None)
+        config_items["teed_lineart_combine"] = getattr(args, "teed_lineart_combine", None)
         config_items["precond_min_path_length"] = getattr(args, "precond_min_path_length", None)
         config_items["precond_max_path_length"] = getattr(args, "precond_max_path_length", None)
         config_items["precond_min_component_area"] = getattr(args, "precond_min_component_area", None)
@@ -231,6 +238,12 @@ def main(args):
         config_items["pen_width_max_mm"] = getattr(args, "pen_width_max_mm", None)
         config_items["precond_base_stroke_width"] = getattr(args, "precond_base_stroke_width", None)
         config_items["precond_max_stroke_width"] = getattr(args, "precond_max_stroke_width", None)
+        config_items["precond_merge_polylines"] = getattr(args, "precond_merge_polylines", None)
+        config_items["precond_merge_distance"] = getattr(args, "precond_merge_distance", None)
+        config_items["precond_merge_angle_deg"] = getattr(args, "precond_merge_angle_deg", None)
+        config_items["precond_force_open_paths"] = getattr(args, "precond_force_open_paths", None)
+        config_items["precond_target_paths_min"] = getattr(args, "precond_target_paths_min", None)
+        config_items["precond_target_paths_max"] = getattr(args, "precond_target_paths_max", None)
     if pydiffvg.get_backend() == "splat":
         raw_thresh = os.environ.get("DIFFVG_SPLAT_TILE_THRESH")
         if raw_thresh is None or raw_thresh.strip() == "":
@@ -282,6 +295,11 @@ def main(args):
                     safe_steps_default=0,
                     threshold_mode=getattr(args, "teed_threshold_mode", None),
                     hysteresis_low_ratio=getattr(args, "teed_hysteresis_low_ratio", None),
+                    threshold_quantile=getattr(args, "teed_threshold_quantile", None),
+                    lineart_enabled=getattr(args, "teed_lineart", None),
+                    lineart_blur_sigma=getattr(args, "teed_lineart_blur_sigma", None),
+                    lineart_strength=getattr(args, "teed_lineart_strength", None),
+                    lineart_combine=getattr(args, "teed_lineart_combine", None),
                     require_weights=True,
                     missing_weights_message=(
                         "--edge-backend teed requires weights. "
@@ -302,6 +320,13 @@ def main(args):
                     max_stroke_width=getattr(args, "precond_max_stroke_width", None),
                     clamp_max_width=max_width,
                 )
+                apply_polyline_settings(
+                    cfg,
+                    merge_polylines=getattr(args, "precond_merge_polylines", None),
+                    merge_distance=getattr(args, "precond_merge_distance", None),
+                    merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
+                    force_open_paths=getattr(args, "precond_force_open_paths", None),
+                )
             else:
                 # For apples-to-apples comparisons with TEED, keep XDoG defaults
                 # aligned unless the user explicitly overrides them.
@@ -311,13 +336,32 @@ def main(args):
                     max_stroke_width=getattr(args, "precond_max_stroke_width", None),
                     clamp_max_width=max_width,
                 )
+                apply_polyline_settings(
+                    cfg,
+                    merge_polylines=getattr(args, "precond_merge_polylines", None),
+                    merge_distance=getattr(args, "precond_merge_distance", None),
+                    merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
+                    force_open_paths=getattr(args, "precond_force_open_paths", None),
+                )
         else:
             apply_stroke_widths(cfg, clamp_max_width=max_width)
+            apply_polyline_settings(
+                cfg,
+                merge_polylines=getattr(args, "precond_merge_polylines", None),
+                merge_distance=getattr(args, "precond_merge_distance", None),
+                merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
+                force_open_paths=getattr(args, "precond_force_open_paths", None),
+            )
         if lineart_precondition:
             if precondition and edge_backend != "xdog":
                 print("NOTE: --edge-backend is ignored when using --lineart-precondition.")
             cfg.mode = "lineart"
             cfg.num_colors = 1
+        apply_precondition_scaling(
+            cfg,
+            target_paths_min=getattr(args, "precond_target_paths_min", None),
+            target_paths_max=getattr(args, "precond_target_paths_max", None),
+        )
         pre = pydiffvg.build_preconditioned_scene(
             args.target,
             cfg=cfg,
@@ -540,8 +584,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--teed-detect-res", type=int, default=None, help="TEED detect resolution (min side); default=512 for TEED runs")
     parser.add_argument("--teed-threshold", type=float, default=None, help="TEED threshold (0..1); default=0.30 for TEED runs")
     parser.add_argument("--teed-safe-steps", type=int, default=None, help="Quantization steps; default=0 for TEED runs")
-    parser.add_argument("--teed-threshold-mode", type=str, default=None, choices=["fixed", "hysteresis"], help="TEED thresholding mode")
+    parser.add_argument("--teed-threshold-mode", type=str, default=None, choices=["fixed", "hysteresis", "quantile", "otsu"], help="TEED thresholding mode")
     parser.add_argument("--teed-hysteresis-low-ratio", type=float, default=None, help="Hysteresis low/high ratio (default=0.5)")
+    parser.add_argument("--teed-threshold-quantile", type=float, default=None, help="Quantile used for teed threshold mode=quantile (0..1)")
+    parser.add_argument("--teed-lineart", action="store_true", default=None, help="Apply lineart intensity boost (Anyline-style)")
+    parser.add_argument("--teed-lineart-blur-sigma", type=float, default=None, help="Gaussian sigma for lineart intensity (default from config)")
+    parser.add_argument("--teed-lineart-strength", type=float, default=None, help="Strength for lineart intensity boost (default from config)")
+    parser.add_argument("--teed-lineart-combine", type=str, default=None, choices=["screen", "max", "add"], help="Combine TEED + lineart intensity")
     parser.add_argument("--stroke-width-mode", type=str, default=None, choices=["absolute", "a4_pen"], help="Stroke width mode for preconditioning")
     parser.add_argument("--pen-width-min-mm", type=float, default=None, help="A4 pen min width in mm (default=0.35)")
     parser.add_argument("--pen-width-max-mm", type=float, default=None, help="A4 pen max width in mm (default=0.8)")
@@ -550,6 +599,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--precond-min-component-area", type=int, default=None, help="Remove edge components smaller than this area; default=0 for TEED")
     parser.add_argument("--precond-morph-open-radius", type=int, default=None, help="Edge mask binary opening radius; default=0 for TEED")
     parser.add_argument("--precond-morph-close-radius", type=int, default=None, help="Edge mask binary closing radius; default=0 for TEED")
+    parser.add_argument("--precond-merge-polylines", action="store_true", default=None, help="Merge aligned precondition polylines")
+    parser.add_argument("--precond-merge-distance", type=float, default=None, help="Merge distance in pixels (default from config)")
+    parser.add_argument("--precond-merge-angle-deg", type=float, default=None, help="Merge angle threshold in degrees (default from config)")
+    parser.add_argument("--precond-force-open-paths", action="store_true", default=None, help="Force open stroke paths (avoid closed loops)")
+    parser.add_argument(
+        "--precond-target-paths-min",
+        type=int,
+        default=None,
+        help="Target minimum path count for auto-scaling (default: PRECONDITION_TARGET_PATHS_MIN_DEFAULT)",
+    )
+    parser.add_argument(
+        "--precond-target-paths-max",
+        type=int,
+        default=None,
+        help="Target maximum path count for auto-scaling (default: PRECONDITION_TARGET_PATHS_MAX_DEFAULT)",
+    )
     parser.add_argument("--precond-base-stroke-width", type=float, default=None, help="Precondition base stroke width; default=0.5 for TEED")
     parser.add_argument("--precond-max-stroke-width", type=float, default=None, help="Precondition max stroke width; default=1.0 for TEED (clamped to --max_width)")
     parser.add_argument("--fixed-stroke", action="store_true", help="Fix all stroke colors to black ink (disables color optimization)")

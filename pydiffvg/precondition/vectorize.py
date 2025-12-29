@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import numpy as np
 import torch
 
@@ -40,6 +41,78 @@ def _smooth_polyline(points: np.ndarray, window: int) -> np.ndarray:
     for i in range(points.shape[0]):
         smoothed[i] = padded[i : i + w].mean(axis=0)
     return smoothed
+
+
+def merge_polylines(
+    polys: list[list[tuple[int, int]]],
+    cfg: PreconditionConfig,
+    *,
+    enabled: bool = True,
+) -> list[list[tuple[int, int]]]:
+    """Greedy merge of polylines when endpoints are close and tangents align."""
+    if not enabled or not polys or cfg.merge_distance <= 0:
+        return polys
+
+    def endpoint(p: list[tuple[int, int]], head: bool) -> np.ndarray:
+        return np.array(p[0 if head else -1], dtype=np.float32)
+
+    def tangent(p: list[tuple[int, int]], head: bool) -> np.ndarray:
+        pts = np.array(p, dtype=np.float32)
+        if head:
+            v = pts[min(len(p) - 1, 1)] - pts[0]
+        else:
+            v = pts[-1] - pts[-2 if len(p) > 1 else -1]
+        n = np.linalg.norm(v) + 1e-8
+        return v / n
+
+    used = [False] * len(polys)
+    merged: list[list[tuple[int, int]]] = []
+    max_d2 = cfg.merge_distance * cfg.merge_distance
+    cos_thresh = math.cos(math.radians(cfg.merge_angle_deg))
+
+    for i, p in enumerate(polys):
+        if used[i]:
+            continue
+        chain = list(p)
+        used[i] = True
+        changed = True
+        while changed:
+            changed = False
+            head_pt = endpoint(chain, head=True)
+            tail_pt = endpoint(chain, head=False)
+            head_tan = tangent(chain, head=True)
+            tail_tan = tangent(chain, head=False)
+            best = None
+            for j, q in enumerate(polys):
+                if used[j] or i == j or len(q) < 2:
+                    continue
+                q_head = endpoint(q, True)
+                q_tail = endpoint(q, False)
+                # Try connecting tail->head (and variations)
+                for tail_first, reverse_q in ((True, False), (True, True), (False, False), (False, True)):
+                    a_pt = tail_pt if tail_first else head_pt
+                    a_tan = tail_tan if tail_first else head_tan
+                    q_start = q_tail if reverse_q else q_head
+                    q_tan = tangent(q[::-1] if reverse_q else q, head=True)
+                    d2 = float(np.sum((a_pt - q_start) ** 2))
+                    if d2 > max_d2:
+                        continue
+                    cosang = float(np.dot(a_tan, q_tan))
+                    if cosang < cos_thresh:
+                        continue
+                    score = d2 - cosang * cfg.merge_distance
+                    best = (score, j, tail_first, reverse_q)
+            if best is not None:
+                _, j, tail_first, reverse_q = best
+                q = polys[j][::-1] if reverse_q else polys[j]
+                if tail_first:
+                    chain.extend(q)
+                else:
+                    chain = q + chain
+                used[j] = True
+                changed = True
+        merged.append(chain)
+    return merged
 
 
 def _catmull_rom_to_beziers(points: np.ndarray, tension: float, is_closed: bool) -> tuple[np.ndarray, np.ndarray]:
@@ -113,7 +186,9 @@ def polylines_to_paths(
             continue
 
         is_closed = np.linalg.norm(pts[0] - pts[-1]) < 1.0
-        if is_closed:
+        if cfg.force_open_paths:
+            is_closed = False
+        elif is_closed:
             pts[-1] = pts[0]
 
         if cfg.curve_mode.lower() == "bezier":
@@ -167,4 +242,4 @@ def polylines_to_paths(
     return shapes, groups
 
 
-__all__ = ["polylines_to_paths"]
+__all__ = ["merge_polylines", "polylines_to_paths"]

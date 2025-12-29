@@ -10,7 +10,6 @@ This skips edge detectors and instead:
 
 from __future__ import annotations
 
-import math
 from typing import Iterable, List, Tuple
 
 import numpy as np
@@ -24,6 +23,7 @@ from .vectorize import (
     _catmull_rom_to_beziers,
     _rdp,
     _smooth_polyline,
+    merge_polylines,
 )
 
 
@@ -68,73 +68,6 @@ def _quantize_palette(image: np.ndarray, cfg: PreconditionConfig) -> Tuple[np.nd
     return palette.astype(np.float32), labels.reshape(h, w)
 
 
-def _merge_polylines(polys: List[List[Tuple[int, int]]], cfg: PreconditionConfig) -> List[List[Tuple[int, int]]]:
-    """Greedy merge of polylines when endpoints are close and tangents align."""
-    if not polys:
-        return []
-
-    def endpoint(p: List[Tuple[int, int]], head: bool):
-        return np.array(p[0 if head else -1], dtype=np.float32)
-
-    def tangent(p: List[Tuple[int, int]], head: bool):
-        pts = np.array(p, dtype=np.float32)
-        if head:
-            v = pts[min(len(p) - 1, 1)] - pts[0]
-        else:
-            v = pts[-1] - pts[-2 if len(p) > 1 else -1]
-        n = np.linalg.norm(v) + 1e-8
-        return v / n
-
-    used = [False] * len(polys)
-    merged: List[List[Tuple[int, int]]] = []
-    max_d2 = cfg.merge_distance * cfg.merge_distance
-    cos_thresh = math.cos(math.radians(cfg.merge_angle_deg))
-
-    for i, p in enumerate(polys):
-        if used[i]:
-            continue
-        chain = list(p)
-        used[i] = True
-        changed = True
-        while changed:
-            changed = False
-            head_pt = endpoint(chain, head=True)
-            tail_pt = endpoint(chain, head=False)
-            head_tan = tangent(chain, head=True)
-            tail_tan = tangent(chain, head=False)
-            best = None
-            for j, q in enumerate(polys):
-                if used[j] or i == j or len(q) < 2:
-                    continue
-                q_head = endpoint(q, True)
-                q_tail = endpoint(q, False)
-                # Try connecting tail->head
-                for tail_first, reverse_q in ((True, False), (True, True), (False, False), (False, True)):
-                    a_pt = tail_pt if tail_first else head_pt
-                    a_tan = tail_tan if tail_first else head_tan
-                    q_start = q_tail if reverse_q else q_head
-                    q_tan = tangent(q[::-1] if reverse_q else q, head=True)
-                    d2 = float(np.sum((a_pt - q_start) ** 2))
-                    if d2 > max_d2:
-                        continue
-                    cosang = float(np.dot(a_tan, q_tan))
-                    if cosang < cos_thresh:
-                        continue
-                    score = d2 - cosang * cfg.merge_distance
-                    best = (score, j, tail_first, reverse_q)
-            if best is not None:
-                _, j, tail_first, reverse_q = best
-                q = polys[j][::-1] if reverse_q else polys[j]
-                if tail_first:
-                    chain.extend(q)
-                else:
-                    chain = q + chain
-                used[j] = True
-                changed = True
-        merged.append(chain)
-    return merged
-
-
 def _paths_from_polylines(polys: List[List[Tuple[int, int]]], image_rgb: np.ndarray, cfg: PreconditionConfig, device: torch.device) -> Tuple[List[pydiffvg.Path], List[pydiffvg.ShapeGroup]]:
     shapes: List[pydiffvg.Path] = []
     groups: List[pydiffvg.ShapeGroup] = []
@@ -147,7 +80,9 @@ def _paths_from_polylines(polys: List[List[Tuple[int, int]]], image_rgb: np.ndar
         if pts.shape[0] < 2:
             continue
         is_closed = np.linalg.norm(pts[0] - pts[-1]) < 1.0
-        if is_closed:
+        if cfg.force_open_paths:
+            is_closed = False
+        elif is_closed:
             pts[-1] = pts[0]
         if cfg.curve_mode.lower() == "bezier":
             pts, cp_arr = _catmull_rom_to_beziers(pts, cfg.catmull_rom_tension, is_closed)
@@ -194,7 +129,7 @@ def build_lineart_scene(
         skel = skeletonize_edges(mask)
         skel_union |= skel
         polylines = skeleton_to_polylines(skel, cfg)
-        polylines = _merge_polylines(polylines, cfg)
+        polylines = merge_polylines(polylines, cfg)
         shapes, _ = _paths_from_polylines(polylines, image_rgb, cfg, device)
         if not shapes:
             continue

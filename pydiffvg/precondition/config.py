@@ -9,11 +9,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+PRECONDITION_TARGET_PATHS_MIN_DEFAULT = 512
+PRECONDITION_TARGET_PATHS_MAX_DEFAULT = 1024
+PRECONDITION_AUTO_TRIALS_DEFAULT = 4
+
 
 @dataclass
 class PreconditionConfig:
     # Edge backend selection (used when mode="xdog")
     edge_backend: str = "xdog"  # "xdog" or "teed"
+
+    # Preconditioning resolution controls (auto-scaled to hit a target path range).
+    precondition_target_paths_min: int = PRECONDITION_TARGET_PATHS_MIN_DEFAULT
+    precondition_target_paths_max: int = PRECONDITION_TARGET_PATHS_MAX_DEFAULT
+    precondition_auto_trials: int = PRECONDITION_AUTO_TRIALS_DEFAULT
 
     # XDoG parameters
     sigma: float = 1.2
@@ -28,12 +37,17 @@ class PreconditionConfig:
     teed_detect_resolution: int = 512
     teed_safe_steps: int = 2
     teed_threshold: float = 0.5
-    teed_threshold_mode: str = "fixed"  # "fixed" or "hysteresis"
+    teed_threshold_mode: str = "fixed"  # "fixed", "hysteresis", "quantile", "otsu"
     teed_hysteresis_low_ratio: float = 0.5
     teed_auto_tune_threshold: bool = True
     teed_threshold_min: float = 0.05
     teed_threshold_decay: float = 0.85
     teed_threshold_trials: int = 8
+    teed_threshold_quantile: float = 0.85
+    teed_lineart: bool = False
+    teed_lineart_blur_sigma: float = 2.0
+    teed_lineart_strength: float = 1.5
+    teed_lineart_combine: str = "screen"  # "screen", "max", "add"
 
     # Edge cleanup
     min_component_area: int = 24
@@ -46,8 +60,10 @@ class PreconditionConfig:
     simplify_epsilon: float = 1.25
     max_paths: int | None = 2000
     smooth_window: int = 5
+    merge_polylines: bool = False
 
     # Stroke shaping
+    force_open_paths: bool = False
     stroke_width_mode: str = "a4_pen"  # "absolute" or "a4_pen"
     stroke_width_pen_min_mm: float = 0.35
     stroke_width_pen_max_mm: float = 0.8
@@ -73,4 +89,9 @@ class PreconditionConfig:
     clamp_stroke_width_per_color: bool = True
 
 
-__all__ = ["PreconditionConfig"]
+__all__ = [
+    "PRECONDITION_AUTO_TRIALS_DEFAULT",
+    "PRECONDITION_TARGET_PATHS_MAX_DEFAULT",
+    "PRECONDITION_TARGET_PATHS_MIN_DEFAULT",
+    "PreconditionConfig",
+]
