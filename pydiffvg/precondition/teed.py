@@ -8,6 +8,7 @@ edge mask compatible with the existing skeletonization/vectorization pipeline.
 from __future__ import annotations
 
 from pathlib import Path
+import inspect
 from typing import Dict, Tuple
 
 import numpy as np
@@ -18,6 +19,11 @@ from PIL import Image
 from skimage import filters, morphology
 
 from .config import PreconditionConfig
+
+try:
+    _REMOVE_SMALL_OBJECTS_USES_MAX = "max_size" in inspect.signature(morphology.remove_small_objects).parameters
+except (TypeError, ValueError):
+    _REMOVE_SMALL_OBJECTS_USES_MAX = False
 
 
 @torch.jit.script
@@ -371,11 +377,17 @@ def teed_mask_from_strength(
         )
 
     if cfg.min_component_area > 0:
-        edges = morphology.remove_small_objects(edges, cfg.min_component_area)
+        min_area = int(cfg.min_component_area)
+        if _REMOVE_SMALL_OBJECTS_USES_MAX:
+            # skimage>=0.26: "max_size" removes objects <= value (old min_size removed < value)
+            max_size = max(0, min_area - 1)
+            edges = morphology.remove_small_objects(edges, max_size=max_size)
+        else:
+            edges = morphology.remove_small_objects(edges, min_size=min_area)
     if cfg.morph_open_radius > 0:
-        edges = morphology.binary_opening(edges, morphology.disk(cfg.morph_open_radius))
+        edges = morphology.opening(edges, morphology.disk(cfg.morph_open_radius))
     if cfg.morph_close_radius > 0:
-        edges = morphology.binary_closing(edges, morphology.disk(cfg.morph_close_radius))
+        edges = morphology.closing(edges, morphology.disk(cfg.morph_close_radius))
 
     return edges
 
