@@ -3,7 +3,7 @@
 # Positional args like "target" are not set here.
 
 precondition = true
-edge_backend = "teed"
+precond_mode = "teed"
 teed_weights = "weights/teed/5_model.pth"
 teed_detect_res = 512
 teed_threshold = 0.30

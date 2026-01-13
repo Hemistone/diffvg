@@ -200,8 +200,23 @@ def apply_teed_settings(
         cfg.teed_lineart_combine = str(lineart_combine)
 
     if require_weights and (cfg.teed_weights_path is None or str(cfg.teed_weights_path).strip() == ""):
-        message = missing_weights_message or "TEED edge backend requires weights. Provide a .pth path."
+        message = missing_weights_message or "TEED preconditioning requires weights. Provide a .pth path."
         raise ValueError(message)
+
+
+def apply_lineart_settings(
+    cfg: PreconditionConfig,
+    *,
+    threshold_mode: str | None = None,
+    threshold_quantile: float | None = None,
+    threshold: float | None = None,
+) -> None:
+    if threshold_mode is not None:
+        cfg.lineart_threshold_mode = str(threshold_mode)
+    if threshold_quantile is not None:
+        cfg.lineart_threshold_quantile = float(threshold_quantile)
+    if threshold is not None:
+        cfg.lineart_threshold = float(threshold)
 
 
 __all__ = [
@@ -212,5 +227,6 @@ __all__ = [
     "apply_precondition_cleanup",
     "apply_stroke_widths",
     "apply_teed_settings",
+    "apply_lineart_settings",
     "resolve_teed_weights_path",
 ]

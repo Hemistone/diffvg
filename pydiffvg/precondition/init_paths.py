@@ -113,7 +113,7 @@ def _edges_and_polylines(
 ) -> tuple[np.ndarray, np.ndarray, list[list[tuple[int, int]]]]:
     orig_thr = cfg.teed_threshold
     if (
-        (cfg.edge_backend or "xdog").strip().lower() == "teed"
+        (cfg.mode or "xdog").strip().lower() == "teed"
         and cfg.teed_auto_tune_threshold
         and not disable_auto_tune
         and (cfg.teed_threshold_mode or "fixed").strip().lower() == "fixed"

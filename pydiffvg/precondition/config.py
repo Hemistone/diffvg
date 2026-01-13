@@ -16,9 +16,6 @@ PRECONDITION_AUTO_TRIALS_DEFAULT = 4
 
 @dataclass
 class PreconditionConfig:
-    # Edge backend selection (used when mode="xdog")
-    edge_backend: str = "xdog"  # "xdog" or "teed"
-
     # Preconditioning resolution controls (auto-scaled to hit a target path range).
     precondition_target_paths_min: int = PRECONDITION_TARGET_PATHS_MIN_DEFAULT
     precondition_target_paths_max: int = PRECONDITION_TARGET_PATHS_MAX_DEFAULT
@@ -32,7 +29,7 @@ class PreconditionConfig:
     phi: float = 10.0
     edge_threshold: float = -0.015  # post-nonlinearity threshold; more negative = fewer edges
 
-    # TEED parameters (used when edge_backend="teed")
+    # TEED parameters (used when mode="teed")
     teed_weights_path: str | None = None
     teed_detect_resolution: int = 512
     teed_safe_steps: int = 2
@@ -79,14 +76,17 @@ class PreconditionConfig:
     # Scoring / ordering
     sort_by: str = "darkness_length"  # or "length"
 
-    # Line-art mode toggles
-    mode: str = "xdog"  # "xdog" or "lineart"
+    # Preconditioning mode
+    mode: str = "xdog"  # "xdog", "teed", or "lineart"
     num_colors: int = 1
     palette_mode: str = "auto"  # "auto" or "fixed"
     palette_colors: list[tuple[float, float, float]] | None = None
     merge_distance: float = 3.0
     merge_angle_deg: float = 18.0
     clamp_stroke_width_per_color: bool = True
+    lineart_threshold_mode: str = "quantile"  # "quantile", "otsu", or "fixed"
+    lineart_threshold_quantile: float = 0.25
+    lineart_threshold: float = 0.5
 
 
 __all__ = [

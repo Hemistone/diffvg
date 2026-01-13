@@ -20,6 +20,7 @@ from PIL import Image
 import pydiffvg
 from pydiffvg.precondition.cli import (
     apply_fixed_stroke_config,
+    apply_lineart_settings,
     apply_pen_widths,
     apply_precondition_scaling,
     apply_polyline_settings,
@@ -73,8 +74,11 @@ def main() -> None:
     parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
     parser.add_argument("image", type=Path, help="Input raster image")
     parser.add_argument("--backend", default="splat", choices=["baseline", "splat"], help="Render backend to use")
-    parser.add_argument("--edge-backend", type=str, default="xdog", choices=["xdog", "teed"], help="Edge backend for preconditioning")
-    parser.add_argument("--teed-weights", type=str, default=None, help="Path to TEED/MTEED weights (.pth) for --edge-backend teed")
+    parser.add_argument("--precond-mode", type=str, default="xdog", choices=["xdog", "teed", "lineart"], help="Preconditioning mode")
+    parser.add_argument("--lineart-threshold-mode", type=str, default=None, choices=["quantile", "otsu", "fixed"], help="Lineart threshold mode")
+    parser.add_argument("--lineart-threshold-quantile", type=float, default=None, help="Quantile used for lineart threshold (0..1)")
+    parser.add_argument("--lineart-threshold", type=float, default=None, help="Fixed threshold for lineart mode (0..1)")
+    parser.add_argument("--teed-weights", type=str, default=None, help="Path to TEED/MTEED weights (.pth) for precond_mode=teed")
     parser.add_argument("--teed-detect-res", type=int, default=512, help="TEED detect resolution (min side) before rounding to 64-multiple")
     parser.add_argument("--teed-threshold", type=float, default=0.5, help="Threshold on TEED edge strength (0..1) to form a boolean edge mask")
     parser.add_argument("--teed-safe-steps", type=int, default=2, help="Quantization steps (controlnet-aux safe_step); 0 disables")
@@ -166,9 +170,18 @@ def main() -> None:
         enabled=getattr(args, "fixed_stroke", False),
         alpha=getattr(args, "fixed_stroke_alpha", None),
     )
+    apply_lineart_settings(
+        cfg,
+        threshold_mode=getattr(args, "lineart_threshold_mode", None),
+        threshold_quantile=getattr(args, "lineart_threshold_quantile", None),
+        threshold=getattr(args, "lineart_threshold", None),
+    )
 
-    cfg.edge_backend = args.edge_backend
-    if args.edge_backend == "teed":
+    cfg.mode = (getattr(args, "precond_mode", "xdog") or "xdog").strip().lower()
+    if cfg.mode not in ("xdog", "teed", "lineart"):
+        raise ValueError(f"Unsupported --precond-mode '{cfg.mode}'. Choose from: xdog, teed, lineart")
+
+    if cfg.mode == "teed":
         apply_teed_settings(
             cfg,
             weights_path=args.teed_weights,
@@ -183,7 +196,7 @@ def main() -> None:
             lineart_strength=getattr(args, "teed_lineart_strength", None),
             lineart_combine=getattr(args, "teed_lineart_combine", None),
             require_weights=True,
-            missing_weights_message="--edge-backend teed requires --teed-weights PATH",
+            missing_weights_message="precond_mode=teed requires --teed-weights PATH",
         )
     scene = pydiffvg.build_preconditioned_scene(args.image, cfg=cfg, backend=args.backend, device=device)
 

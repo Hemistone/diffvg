@@ -2,7 +2,7 @@
 # Uses argparse dest names (underscores), not CLI flag names.
 
 precondition = true
-edge_backend = "teed"
+precond_mode = "teed"
 teed_weights = "weights/teed/5_model.pth"
 teed_detect_res = 768
 teed_threshold = 0.22

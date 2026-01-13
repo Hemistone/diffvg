@@ -6,9 +6,10 @@ destination names (underscores, not hyphens).
 
 Key mapping examples:
 
-- `--edge-backend` -> `edge_backend`
+- `--precond-mode` -> `precond_mode`
 - `--teed-detect-res` -> `teed_detect_res`
 - `--precond-min-path-length` -> `precond_min_path_length`
+- `--lineart-threshold-quantile` -> `lineart_threshold_quantile`
 
 ## Usage
 
@@ -21,6 +22,12 @@ python apps/painterly_rendering.py --config configs/painterly_teed.toml imgs/scr
 Note: `apps/painterly_rendering.py` defaults to
 `configs/painterly_teed_detail_quantile.toml` when `--config` is omitted.
 
+Lineart preconditioning (painterly):
+
+```bash
+python apps/painterly_rendering.py --config configs/painterly_lineart_quantile.toml imgs/scream.jpg
+```
+
 Precondition-only debug run:
 
 ```bash
@@ -30,16 +37,24 @@ python apps/precondition_vectorize.py --config configs/precondition_vectorize_te
 Note: `apps/precondition_vectorize.py` defaults to
 `configs/precondition_vectorize_teed_detail_quantile.toml` when `--config` is omitted.
 
+Lineart preconditioning (precondition-only):
+
+```bash
+python apps/precondition_vectorize.py --config configs/precondition_vectorize_lineart_quantile.toml imgs/scream.jpg
+```
+
 ## Presets
 
 - `painterly_teed.toml`: baseline TEED defaults for painterly runs.
 - `painterly_teed_detail.toml`: higher detect resolution, lower threshold, longer paths.
 - `painterly_teed_detail_quantile.toml`: detail preset using quantile thresholding.
 - `painterly_teed_detail_otsu.toml`: detail preset using Otsu thresholding.
+- `painterly_lineart_quantile.toml`: lineart preset using quantile thresholding.
 - `precondition_vectorize_teed.toml`: baseline TEED defaults for precondition-only debug.
 - `precondition_vectorize_teed_detail.toml`: denser edges for skeleton inspection.
 - `precondition_vectorize_teed_detail_quantile.toml`: detail preset using quantile thresholding.
 - `precondition_vectorize_teed_detail_otsu.toml`: detail preset using Otsu thresholding.
+- `precondition_vectorize_lineart_quantile.toml`: lineart preset using quantile thresholding.
 
 ## Notes
 

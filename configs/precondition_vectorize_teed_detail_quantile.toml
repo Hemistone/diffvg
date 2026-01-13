@@ -1,7 +1,7 @@
 # Precondition-only TEED preset (detail) using quantile thresholding.
 # Uses argparse dest names (underscores), not CLI flag names.
 
-edge_backend = "teed"
+precond_mode = "teed"
 teed_weights = "weights/teed/5_model.pth"
 teed_detect_res = 768
 teed_threshold_mode = "quantile"

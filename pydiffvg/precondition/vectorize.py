@@ -204,7 +204,7 @@ def polylines_to_paths(
         luminance = gray[ys, xs]
         darkness = 1.0 - float(luminance.mean())
         width = cfg.base_stroke_width + (cfg.max_stroke_width - cfg.base_stroke_width) * (darkness ** cfg.stroke_width_gamma)
-        if (cfg.edge_backend or "xdog").strip().lower() == "xdog":
+        if (cfg.mode or "xdog").strip().lower() == "xdog":
             width *= float(cfg.xdog_stroke_width_scale)
         stroke_width = torch.tensor(width, dtype=torch.float32, device=device)
 

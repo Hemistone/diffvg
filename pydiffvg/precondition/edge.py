@@ -1,4 +1,4 @@
-"""Edge backend selection for preconditioning."""
+"""Edge selection helper for preconditioning."""
 
 from __future__ import annotations
 
@@ -15,15 +15,14 @@ def compute_edge_mask(
     *,
     device: torch.device,
 ) -> np.ndarray:
-    backend = (cfg.edge_backend or "xdog").strip().lower()
-    if backend == "xdog":
+    mode = (cfg.mode or "xdog").strip().lower()
+    if mode == "xdog":
         return xdog_edges(image_rgb, cfg)
-    if backend == "teed":
+    if mode == "teed":
         from .teed import teed_edges
 
         return teed_edges(image_rgb, cfg, device=device)
-    raise ValueError(f"Unsupported edge_backend '{cfg.edge_backend}'. Choose from: xdog, teed")
+    raise ValueError(f"Unsupported precond mode '{cfg.mode}'. Choose from: xdog, teed")
 
 
 __all__ = ["compute_edge_mask"]
-

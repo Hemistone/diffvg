@@ -2,7 +2,7 @@
 # Uses argparse dest names (underscores), not CLI flag names.
 # Positional args like "image" are not set here.
 
-edge_backend = "teed"
+precond_mode = "teed"
 teed_weights = "weights/teed/5_model.pth"
 teed_detect_res = 512
 teed_threshold = 0.50

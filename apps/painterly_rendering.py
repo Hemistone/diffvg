@@ -23,6 +23,7 @@ import torch
 from single_utils import create_run_context, log_run_configuration
 from pydiffvg.precondition.cli import (
     apply_fixed_stroke_config,
+    apply_lineart_settings,
     apply_pen_widths,
     apply_precondition_scaling,
     apply_polyline_settings,
@@ -78,8 +79,9 @@ def main(args):
     pydiffvg.set_use_gpu(use_gpu)
 
     precondition = bool(getattr(args, "precondition", False))
-    lineart_precondition = bool(getattr(args, "lineart_precondition", False))
-    edge_backend = getattr(args, "edge_backend", "xdog").strip().lower()
+    precond_mode = (getattr(args, "precond_mode", "xdog") or "xdog").strip().lower()
+    if precondition and precond_mode not in ("xdog", "teed", "lineart"):
+        raise ValueError("Use only: --precond-mode {xdog,teed,lineart}.")
     fixed_stroke = bool(getattr(args, "fixed_stroke", False))
     fixed_stroke_alpha = float(getattr(args, "fixed_stroke_alpha", 0.9))
     fixed_stroke_width = getattr(args, "fixed_stroke_width", None)
@@ -171,17 +173,19 @@ def main(args):
     run_label = f"{_sanitize_component(target_path.stem)}_paths{num_paths}_"
     run_label += "blob" if args.use_blob else "strokes"
     if precondition:
-        run_label += f"_precondition_{edge_backend}"
-    elif lineart_precondition:
-        run_label += "_lineart_precondition"
+        if precond_mode == "lineart":
+            run_label += "_precondition_lineart"
+        else:
+            run_label += f"_precondition_{precond_mode}"
 
-    mode_dir = "blob" if args.use_blob else ("strokes_precondition" if (precondition or lineart_precondition) else "strokes")
+    mode_dir = "blob" if args.use_blob else ("strokes_precondition" if precondition else "strokes")
     image_dir = _sanitize_component(target_path.stem)
     variant_parts = [backend, loss_name]
     if precondition:
-        variant_parts.append(edge_backend)
-    elif lineart_precondition:
-        variant_parts.append("lineart")
+        if precond_mode == "lineart":
+            variant_parts.append("lineart")
+        else:
+            variant_parts.append(precond_mode)
     if fixed_stroke and not args.use_blob:
         variant_parts.append("fixed_ink")
     variant_dir = "_".join(variant_parts)
@@ -200,9 +204,8 @@ def main(args):
     config_items = {
         "device": device_str,
         "backend": backend,
-        "precondition": precondition or lineart_precondition,
-        "lineart_precondition": lineart_precondition,
-        "edge_backend": edge_backend if precondition else None,
+        "precondition": precondition,
+        "precond_mode": precond_mode if precondition else None,
         "fixed_stroke": fixed_stroke if not args.use_blob else None,
         "fixed_stroke_alpha": fixed_stroke_alpha if (fixed_stroke and not args.use_blob) else None,
         "fixed_stroke_width": fixed_stroke_width if not args.use_blob else None,
@@ -215,7 +218,7 @@ def main(args):
         "blob_mode": args.use_blob,
         "run_dir": run.results_dir,
     }
-    if precondition and edge_backend == "teed":
+    if precondition and precond_mode == "teed":
         config_items["teed_weights"] = getattr(args, "teed_weights", None) or _default_teed_weights_path()
         config_items["teed_detect_res"] = getattr(args, "teed_detect_res", None)
         config_items["teed_threshold"] = getattr(args, "teed_threshold", None)
@@ -232,7 +235,7 @@ def main(args):
         config_items["precond_min_component_area"] = getattr(args, "precond_min_component_area", None)
         config_items["precond_morph_open_radius"] = getattr(args, "precond_morph_open_radius", None)
         config_items["precond_morph_close_radius"] = getattr(args, "precond_morph_close_radius", None)
-    if precondition or lineart_precondition:
+    if precondition:
         config_items["stroke_width_mode"] = getattr(args, "stroke_width_mode", None)
         config_items["pen_width_min_mm"] = getattr(args, "pen_width_min_mm", None)
         config_items["pen_width_max_mm"] = getattr(args, "pen_width_max_mm", None)
@@ -244,6 +247,9 @@ def main(args):
         config_items["precond_force_open_paths"] = getattr(args, "precond_force_open_paths", None)
         config_items["precond_target_paths_min"] = getattr(args, "precond_target_paths_min", None)
         config_items["precond_target_paths_max"] = getattr(args, "precond_target_paths_max", None)
+        config_items["lineart_threshold_mode"] = getattr(args, "lineart_threshold_mode", None)
+        config_items["lineart_threshold_quantile"] = getattr(args, "lineart_threshold_quantile", None)
+        config_items["lineart_threshold"] = getattr(args, "lineart_threshold", None)
     if pydiffvg.get_backend() == "splat":
         raw_thresh = os.environ.get("DIFFVG_SPLAT_TILE_THRESH")
         if raw_thresh is None or raw_thresh.strip() == "":
@@ -264,7 +270,7 @@ def main(args):
     shapes = []
     shape_groups = []
 
-    if getattr(args, "precondition", False) or getattr(args, "lineart_precondition", False):
+    if getattr(args, "precondition", False):
         if args.use_blob:
             raise ValueError("Preconditioning is incompatible with --use_blob (preconditioning generates stroke paths).")
         cfg = pydiffvg.PreconditionConfig()
@@ -280,83 +286,67 @@ def main(args):
             enabled=fixed_stroke,
             alpha=fixed_stroke_alpha,
         )
-        if precondition:
-            cfg.edge_backend = edge_backend
-            if edge_backend == "teed":
-                apply_teed_settings(
-                    cfg,
-                    weights_path=getattr(args, "teed_weights", None),
-                    default_weights_path=_default_teed_weights_path(),
-                    detect_res=getattr(args, "teed_detect_res", None),
-                    detect_res_default=512,
-                    threshold=getattr(args, "teed_threshold", None),
-                    threshold_default=0.30,
-                    safe_steps=getattr(args, "teed_safe_steps", None),
-                    safe_steps_default=0,
-                    threshold_mode=getattr(args, "teed_threshold_mode", None),
-                    hysteresis_low_ratio=getattr(args, "teed_hysteresis_low_ratio", None),
-                    threshold_quantile=getattr(args, "teed_threshold_quantile", None),
-                    lineart_enabled=getattr(args, "teed_lineart", None),
-                    lineart_blur_sigma=getattr(args, "teed_lineart_blur_sigma", None),
-                    lineart_strength=getattr(args, "teed_lineart_strength", None),
-                    lineart_combine=getattr(args, "teed_lineart_combine", None),
-                    require_weights=True,
-                    missing_weights_message=(
-                        "--edge-backend teed requires weights. "
-                        "Put them at weights/teed/5_model.pth or pass --teed-weights PATH."
-                    ),
-                )
-                apply_precondition_cleanup(
-                    cfg,
-                    min_path_length=int(getattr(args, "precond_min_path_length", None) or 4),
-                    max_path_length=int(getattr(args, "precond_max_path_length", None) or 64),
-                    min_component_area=int(getattr(args, "precond_min_component_area", None) or 0),
-                    morph_open_radius=int(getattr(args, "precond_morph_open_radius", None) or 0),
-                    morph_close_radius=int(getattr(args, "precond_morph_close_radius", None) or 0),
-                )
-                apply_stroke_widths(
-                    cfg,
-                    base_stroke_width=getattr(args, "precond_base_stroke_width", None),
-                    max_stroke_width=getattr(args, "precond_max_stroke_width", None),
-                    clamp_max_width=max_width,
-                )
-                apply_polyline_settings(
-                    cfg,
-                    merge_polylines=getattr(args, "precond_merge_polylines", None),
-                    merge_distance=getattr(args, "precond_merge_distance", None),
-                    merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
-                    force_open_paths=getattr(args, "precond_force_open_paths", None),
-                )
-            else:
-                # For apples-to-apples comparisons with TEED, keep XDoG defaults
-                # aligned unless the user explicitly overrides them.
-                apply_stroke_widths(
-                    cfg,
-                    base_stroke_width=getattr(args, "precond_base_stroke_width", None),
-                    max_stroke_width=getattr(args, "precond_max_stroke_width", None),
-                    clamp_max_width=max_width,
-                )
-                apply_polyline_settings(
-                    cfg,
-                    merge_polylines=getattr(args, "precond_merge_polylines", None),
-                    merge_distance=getattr(args, "precond_merge_distance", None),
-                    merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
-                    force_open_paths=getattr(args, "precond_force_open_paths", None),
-                )
-        else:
-            apply_stroke_widths(cfg, clamp_max_width=max_width)
-            apply_polyline_settings(
+        apply_lineart_settings(
+            cfg,
+            threshold_mode=getattr(args, "lineart_threshold_mode", None),
+            threshold_quantile=getattr(args, "lineart_threshold_quantile", None),
+            threshold=getattr(args, "lineart_threshold", None),
+        )
+        apply_precondition_cleanup(
+            cfg,
+            min_path_length=getattr(args, "precond_min_path_length", None),
+            max_path_length=getattr(args, "precond_max_path_length", None),
+            min_component_area=getattr(args, "precond_min_component_area", None),
+            morph_open_radius=getattr(args, "precond_morph_open_radius", None),
+            morph_close_radius=getattr(args, "precond_morph_close_radius", None),
+        )
+        apply_stroke_widths(
+            cfg,
+            base_stroke_width=getattr(args, "precond_base_stroke_width", None),
+            max_stroke_width=getattr(args, "precond_max_stroke_width", None),
+            clamp_max_width=max_width,
+        )
+        apply_polyline_settings(
+            cfg,
+            merge_polylines=getattr(args, "precond_merge_polylines", None),
+            merge_distance=getattr(args, "precond_merge_distance", None),
+            merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
+            force_open_paths=getattr(args, "precond_force_open_paths", None),
+        )
+
+        cfg.mode = precond_mode
+        if precond_mode == "teed":
+            apply_teed_settings(
                 cfg,
-                merge_polylines=getattr(args, "precond_merge_polylines", None),
-                merge_distance=getattr(args, "precond_merge_distance", None),
-                merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
-                force_open_paths=getattr(args, "precond_force_open_paths", None),
+                weights_path=getattr(args, "teed_weights", None),
+                default_weights_path=_default_teed_weights_path(),
+                detect_res=getattr(args, "teed_detect_res", None),
+                detect_res_default=512,
+                threshold=getattr(args, "teed_threshold", None),
+                threshold_default=0.30,
+                safe_steps=getattr(args, "teed_safe_steps", None),
+                safe_steps_default=0,
+                threshold_mode=getattr(args, "teed_threshold_mode", None),
+                hysteresis_low_ratio=getattr(args, "teed_hysteresis_low_ratio", None),
+                threshold_quantile=getattr(args, "teed_threshold_quantile", None),
+                lineart_enabled=getattr(args, "teed_lineart", None),
+                lineart_blur_sigma=getattr(args, "teed_lineart_blur_sigma", None),
+                lineart_strength=getattr(args, "teed_lineart_strength", None),
+                lineart_combine=getattr(args, "teed_lineart_combine", None),
+                require_weights=True,
+                missing_weights_message=(
+                    "precond_mode=teed requires weights. "
+                    "Put them at weights/teed/5_model.pth or pass --teed-weights PATH."
+                ),
             )
-        if lineart_precondition:
-            if precondition and edge_backend != "xdog":
-                print("NOTE: --edge-backend is ignored when using --lineart-precondition.")
-            cfg.mode = "lineart"
-            cfg.num_colors = 1
+            apply_precondition_cleanup(
+                cfg,
+                min_path_length=int(getattr(args, "precond_min_path_length", None) or 4),
+                max_path_length=int(getattr(args, "precond_max_path_length", None) or 64),
+                min_component_area=int(getattr(args, "precond_min_component_area", None) or 0),
+                morph_open_radius=int(getattr(args, "precond_morph_open_radius", None) or 0),
+                morph_close_radius=int(getattr(args, "precond_morph_close_radius", None) or 0),
+            )
         apply_precondition_scaling(
             cfg,
             target_paths_min=getattr(args, "precond_target_paths_min", None),
@@ -375,7 +365,11 @@ def main(args):
             )
         shapes = pre.shapes
         shape_groups = pre.shape_groups
-        print(f"[precond] generated {len(shapes)}/{num_paths} paths (edge_backend={edge_backend})")
+        if precond_mode == "lineart":
+            mode_label = "lineart"
+        else:
+            mode_label = precond_mode
+        print(f"[precond] generated {len(shapes)}/{num_paths} paths (mode={mode_label})")
         if (pre.width, pre.height) != (canvas_width, canvas_height):
             canvas_width, canvas_height = pre.width, pre.height
         # Save debug masks alongside run artifacts
@@ -578,9 +572,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num_paths", type=int, default=512)
     parser.add_argument("--max_width", type=float, default=2.0)
     parser.add_argument("--backend", type=str, default="baseline", choices=["baseline", "splat"], help="Render backend")
-    parser.add_argument("--precondition", action="store_true", help="Seed paths via preconditioning instead of random init (see --edge-backend)")
-    parser.add_argument("--lineart-precondition", action="store_true", help="Seed paths via line-art preconditioning (palette + skeleton).")
-    parser.add_argument("--edge-backend", type=str, default="xdog", choices=["xdog", "teed"], help="Edge backend for --precondition")
+    parser.add_argument("--precondition", action="store_true", help="Seed paths via preconditioning instead of random init")
+    parser.add_argument("--precond-mode", type=str, default="xdog", choices=["xdog", "teed", "lineart"], help="Preconditioning mode")
+    parser.add_argument("--lineart-threshold-mode", type=str, default=None, choices=["quantile", "otsu", "fixed"], help="Lineart threshold mode")
+    parser.add_argument("--lineart-threshold-quantile", type=float, default=None, help="Quantile used for lineart threshold (0..1)")
+    parser.add_argument("--lineart-threshold", type=float, default=None, help="Fixed threshold for lineart mode (0..1)")
     parser.add_argument("--teed-weights", type=str, default=None, help="Path to TEED weights (.pth). Default: weights/teed/5_model.pth if present")
     parser.add_argument("--teed-detect-res", type=int, default=None, help="TEED detect resolution (min side); default=512 for TEED runs")
     parser.add_argument("--teed-threshold", type=float, default=None, help="TEED threshold (0..1); default=0.30 for TEED runs")
