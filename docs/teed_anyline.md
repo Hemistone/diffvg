@@ -176,6 +176,14 @@ Anyline을 “바로 통째로” 붙이기보다, 아래 순서로 가는 편�
 
 ---
 
+## 8. 고급 라인 모드 방향 (2026-01-13 메모)
+
+* 향후 고도화는 **Flowline(path growing)**과 **ETF/FDoG**에 집중.
+* skeleton graph 개선은 시각적 품질 한계 때문에 제외.
+* ETF/FDoG는 CPU-only로는 무거울 수 있어, GPU 가속을 전제로 검토하는 쪽이 합리적.
+
+---
+
 [1]: https://arxiv.org/abs/2308.06468 "Tiny and Efficient Model for the Edge Detection Generalization (TEED)"
 [2]: https://github.com/TheMistoAI/ComfyUI-Anyline "ComfyUI-Anyline"
 [3]: https://github.com/xavysp/TEED/blob/master/LICENSE "TEED LICENSE (MIT)"

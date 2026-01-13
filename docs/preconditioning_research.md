@@ -172,6 +172,7 @@
 
   * 구현이 XDoG보다는 복잡하고, ETF 반복 smoothing 과정 때문에 CPU 비용이 더 큼.
   * 하지만 여전히 “GPU 수백 iteration”보다는 훨씬 싸다.
+  * GPU로 옮기면 속도/스케일 면에서 현실성이 올라감. (대부분이 dense 필터링/컨볼루션이므로 GPU 친화적)
 
 * practical note:
 
@@ -193,6 +194,12 @@ XDoG / FDoG가 만들어 준 binary edge를 **1-pixel wide centerline** 으로 �
 
   * edge “밴드”를 그래프 구조로 줄여서, **polyline 추출의 준비 단계**.
   * 출력은 boolean 2D 배열; 각 픽셀은 노드, 8-neighborhood로 edge 연결.
+
+* 최근 메모 (2026-01-13):
+
+  * skeleton 자체의 시각 품질 문제(끊기고 뭉개진 “버블” 느낌)가 지속됨.
+  * skeleton graph 개선(예: 그래프 후처리로 긴 선을 잇는 방식)은 **방향성 개선에 도움이 되지 않는다고 판단**하여
+    향후 고도화 대상에서 제외.
 
 ### 3.4 DrawingBotV3 스타일 Path Finding (Sketch Lines PFM 참고)
 
@@ -226,6 +233,11 @@ DrawingBotV3의 Free Path Finding Modules 중 **“Sketch Lines”**가 바로 �
 단점:
 
 * 순차 알고리즘이라 완전 SIMD는 아니지만, Python에서도 큰 병목은 아님 (중요한 길이만 추출하면 됨).
+
+* 최근 메모 (2026-01-13):
+
+  * skeleton 기반 개선보다 **flow-guided path growing (Flowline)** 쪽을
+    고도화의 1순위로 두는 것이 더 유망하다고 판단.
 
 ### 3.5 polyline → Bézier Path fitting
 
@@ -795,13 +807,25 @@ def optimize_from_precondition(image_path: str,
 
 ### 6.3 향후 확장 아이디어 (선택)
 
+* Flowline 모드 (path growing 기반):
+
+  * edge strength + orientation field 기반의 greedy tracing
+  * skeleton 의존도를 낮추고 “긴 스트로크”를 직접 구성
+
 * ETF + FDoG 기반 **coherent line drawing 모드** 추가 (고품질 옵션).([University of Missouri–St. Louis][18])
+
+  * GPU 가속을 전제로 하면 실용성이 높아짐 (필터링/컨볼루션 중심 연산)
+
 * TEED / Anyline(MistoLine) 기반 NN edge/outline을 `edge_mask` 생성기로 도입 (윤곽선 품질 개선, iteration 감소 기대): `docs/teed_anyline.md`
 * DrawingBotV3-style **PFM-like path grower** 구현:
 
   * working/luminance map 사용
   * seed selection (darkest / edge / sobel)
   * step 방향을 gradient/ETF/edge power 기반으로 선택
+
+* 제외 방향 (2026-01-13):
+
+  * skeleton graph 개선은 시각적 품질이 기대에 못 미쳐 제외.
 * splat backend의 `DepthPolicy.small_first` 옵션을 pre-conditioning path 길이나 stroke width 기반으로 자동 설정해서,
   겹치는 stroke의 painterly ordering 제어.([GitHub][6])
 
