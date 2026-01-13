@@ -31,6 +31,23 @@ def _fsmish(input: torch.Tensor) -> torch.Tensor:
     return input * torch.tanh(torch.log(1 + torch.sigmoid(input)))
 
 
+def _safe_quantile(values: np.ndarray, q: float) -> float:
+    q = max(0.0, min(1.0, float(q)))
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.size == 0:
+        return 0.0
+    try:
+        t = torch.from_numpy(arr).reshape(-1)
+        return float(torch.quantile(t, q).item())
+    except Exception:
+        flat = np.sort(arr.reshape(-1))
+        if flat.size == 0:
+            return 0.0
+        idx = int(round((flat.size - 1) * q))
+        idx = max(0, min(flat.size - 1, idx))
+        return float(flat[idx])
+
+
 class _Smish(nn.Module):
     def forward(self, input: torch.Tensor) -> torch.Tensor:  # noqa: A002
         return _fsmish(input)
@@ -362,7 +379,7 @@ def teed_mask_from_strength(
     elif mode == "quantile":
         q = float(cfg.teed_threshold_quantile if threshold is None else threshold)
         q = max(0.0, min(1.0, q))
-        thr = float(np.quantile(strength, q))
+        thr = _safe_quantile(strength, q)
         edges = strength >= thr
     elif mode == "otsu":
         if np.allclose(strength, strength.flat[0]):

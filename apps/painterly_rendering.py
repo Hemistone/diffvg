@@ -21,16 +21,7 @@ import skimage.io
 import torch
 
 from single_utils import create_run_context, log_run_configuration
-from pydiffvg.precondition.cli import (
-    apply_fixed_stroke_config,
-    apply_lineart_settings,
-    apply_pen_widths,
-    apply_precondition_scaling,
-    apply_polyline_settings,
-    apply_precondition_cleanup,
-    apply_stroke_widths,
-    apply_teed_settings,
-)
+from pydiffvg.precondition.cli import build_precondition_config
 
 
 def _default_teed_weights_path() -> str | None:
@@ -40,16 +31,37 @@ def _default_teed_weights_path() -> str | None:
     return None
 
 
+_CONFIG_KEY_ALIASES = {
+    "edge_backend": "precond_mode",
+    "precond_max_paths": "max_paths",
+    "precond_min_path_length": "min_path_length",
+    "precond_max_path_length": "max_path_length",
+    "precond_min_component_area": "min_component_area",
+    "precond_morph_open_radius": "morph_open_radius",
+    "precond_morph_close_radius": "morph_close_radius",
+    "precond_merge_polylines": "merge_polylines",
+    "precond_merge_distance": "merge_distance",
+    "precond_merge_angle_deg": "merge_angle_deg",
+    "precond_force_open_paths": "force_open_paths",
+    "precond_base_stroke_width": "base_stroke_width",
+    "precond_max_stroke_width": "max_stroke_width",
+}
+
+
 def _load_config_defaults(config_path: str, parser: argparse.ArgumentParser) -> dict:
     with open(config_path, "rb") as handle:
         data = tomllib.load(handle)
     if not isinstance(data, dict):
         raise ValueError("Config must be a TOML table (key/value mapping) at top level.")
+    normalized: dict = {}
+    for key, value in data.items():
+        mapped = _CONFIG_KEY_ALIASES.get(key, key)
+        normalized[mapped] = value
     valid = {action.dest for action in parser._actions if action.dest != "config"}
-    unknown = sorted(key for key in data.keys() if key not in valid)
+    unknown = sorted(key for key in normalized.keys() if key not in valid)
     if unknown:
         raise ValueError(f"Unknown config keys in {config_path}: {', '.join(unknown)}")
-    return data
+    return normalized
 
 
 def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
@@ -230,21 +242,22 @@ def main(args):
         config_items["teed_lineart_blur_sigma"] = getattr(args, "teed_lineart_blur_sigma", None)
         config_items["teed_lineart_strength"] = getattr(args, "teed_lineart_strength", None)
         config_items["teed_lineart_combine"] = getattr(args, "teed_lineart_combine", None)
-        config_items["precond_min_path_length"] = getattr(args, "precond_min_path_length", None)
-        config_items["precond_max_path_length"] = getattr(args, "precond_max_path_length", None)
-        config_items["precond_min_component_area"] = getattr(args, "precond_min_component_area", None)
-        config_items["precond_morph_open_radius"] = getattr(args, "precond_morph_open_radius", None)
-        config_items["precond_morph_close_radius"] = getattr(args, "precond_morph_close_radius", None)
     if precondition:
         config_items["stroke_width_mode"] = getattr(args, "stroke_width_mode", None)
         config_items["pen_width_min_mm"] = getattr(args, "pen_width_min_mm", None)
         config_items["pen_width_max_mm"] = getattr(args, "pen_width_max_mm", None)
-        config_items["precond_base_stroke_width"] = getattr(args, "precond_base_stroke_width", None)
-        config_items["precond_max_stroke_width"] = getattr(args, "precond_max_stroke_width", None)
-        config_items["precond_merge_polylines"] = getattr(args, "precond_merge_polylines", None)
-        config_items["precond_merge_distance"] = getattr(args, "precond_merge_distance", None)
-        config_items["precond_merge_angle_deg"] = getattr(args, "precond_merge_angle_deg", None)
-        config_items["precond_force_open_paths"] = getattr(args, "precond_force_open_paths", None)
+        config_items["max_paths"] = args.max_paths if args.max_paths is not None else num_paths
+        config_items["min_path_length"] = getattr(args, "min_path_length", None)
+        config_items["max_path_length"] = getattr(args, "max_path_length", None)
+        config_items["min_component_area"] = getattr(args, "min_component_area", None)
+        config_items["morph_open_radius"] = getattr(args, "morph_open_radius", None)
+        config_items["morph_close_radius"] = getattr(args, "morph_close_radius", None)
+        config_items["base_stroke_width"] = getattr(args, "base_stroke_width", None)
+        config_items["max_stroke_width"] = getattr(args, "max_stroke_width", None)
+        config_items["merge_polylines"] = getattr(args, "merge_polylines", None)
+        config_items["merge_distance"] = getattr(args, "merge_distance", None)
+        config_items["merge_angle_deg"] = getattr(args, "merge_angle_deg", None)
+        config_items["force_open_paths"] = getattr(args, "force_open_paths", None)
         config_items["precond_target_paths_min"] = getattr(args, "precond_target_paths_min", None)
         config_items["precond_target_paths_max"] = getattr(args, "precond_target_paths_max", None)
         config_items["lineart_threshold_mode"] = getattr(args, "lineart_threshold_mode", None)
@@ -273,84 +286,16 @@ def main(args):
     if getattr(args, "precondition", False):
         if args.use_blob:
             raise ValueError("Preconditioning is incompatible with --use_blob (preconditioning generates stroke paths).")
-        cfg = pydiffvg.PreconditionConfig()
-        cfg.max_paths = num_paths
-        apply_pen_widths(
-            cfg,
-            stroke_width_mode=getattr(args, "stroke_width_mode", None),
-            pen_min_mm=getattr(args, "pen_width_min_mm", None),
-            pen_max_mm=getattr(args, "pen_width_max_mm", None),
-        )
-        apply_fixed_stroke_config(
-            cfg,
-            enabled=fixed_stroke,
-            alpha=fixed_stroke_alpha,
-        )
-        apply_lineart_settings(
-            cfg,
-            threshold_mode=getattr(args, "lineart_threshold_mode", None),
-            threshold_quantile=getattr(args, "lineart_threshold_quantile", None),
-            threshold=getattr(args, "lineart_threshold", None),
-        )
-        apply_precondition_cleanup(
-            cfg,
-            min_path_length=getattr(args, "precond_min_path_length", None),
-            max_path_length=getattr(args, "precond_max_path_length", None),
-            min_component_area=getattr(args, "precond_min_component_area", None),
-            morph_open_radius=getattr(args, "precond_morph_open_radius", None),
-            morph_close_radius=getattr(args, "precond_morph_close_radius", None),
-        )
-        apply_stroke_widths(
-            cfg,
-            base_stroke_width=getattr(args, "precond_base_stroke_width", None),
-            max_stroke_width=getattr(args, "precond_max_stroke_width", None),
+        cfg = build_precondition_config(
+            args,
+            default_teed_weights_path=_default_teed_weights_path(),
+            require_teed_weights=True,
+            missing_weights_message=(
+                "precond_mode=teed requires weights. "
+                "Put them at weights/teed/5_model.pth or pass --teed-weights PATH."
+            ),
+            max_paths_fallback=num_paths,
             clamp_max_width=max_width,
-        )
-        apply_polyline_settings(
-            cfg,
-            merge_polylines=getattr(args, "precond_merge_polylines", None),
-            merge_distance=getattr(args, "precond_merge_distance", None),
-            merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
-            force_open_paths=getattr(args, "precond_force_open_paths", None),
-        )
-
-        cfg.mode = precond_mode
-        if precond_mode == "teed":
-            apply_teed_settings(
-                cfg,
-                weights_path=getattr(args, "teed_weights", None),
-                default_weights_path=_default_teed_weights_path(),
-                detect_res=getattr(args, "teed_detect_res", None),
-                detect_res_default=512,
-                threshold=getattr(args, "teed_threshold", None),
-                threshold_default=0.30,
-                safe_steps=getattr(args, "teed_safe_steps", None),
-                safe_steps_default=0,
-                threshold_mode=getattr(args, "teed_threshold_mode", None),
-                hysteresis_low_ratio=getattr(args, "teed_hysteresis_low_ratio", None),
-                threshold_quantile=getattr(args, "teed_threshold_quantile", None),
-                lineart_enabled=getattr(args, "teed_lineart", None),
-                lineart_blur_sigma=getattr(args, "teed_lineart_blur_sigma", None),
-                lineart_strength=getattr(args, "teed_lineart_strength", None),
-                lineart_combine=getattr(args, "teed_lineart_combine", None),
-                require_weights=True,
-                missing_weights_message=(
-                    "precond_mode=teed requires weights. "
-                    "Put them at weights/teed/5_model.pth or pass --teed-weights PATH."
-                ),
-            )
-            apply_precondition_cleanup(
-                cfg,
-                min_path_length=int(getattr(args, "precond_min_path_length", None) or 4),
-                max_path_length=int(getattr(args, "precond_max_path_length", None) or 64),
-                min_component_area=int(getattr(args, "precond_min_component_area", None) or 0),
-                morph_open_radius=int(getattr(args, "precond_morph_open_radius", None) or 0),
-                morph_close_radius=int(getattr(args, "precond_morph_close_radius", None) or 0),
-            )
-        apply_precondition_scaling(
-            cfg,
-            target_paths_min=getattr(args, "precond_target_paths_min", None),
-            target_paths_max=getattr(args, "precond_target_paths_max", None),
         )
         pre = pydiffvg.build_preconditioned_scene(
             args.target,
@@ -566,7 +511,7 @@ def main(args):
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    default_config = "configs/painterly_teed_detail_quantile.toml"
+    default_config = "configs/precondition_teed_detail_quantile.toml"
     parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num_paths", type=int, default=512)
@@ -591,15 +536,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--stroke-width-mode", type=str, default=None, choices=["absolute", "a4_pen"], help="Stroke width mode for preconditioning")
     parser.add_argument("--pen-width-min-mm", type=float, default=None, help="A4 pen min width in mm (default=0.35)")
     parser.add_argument("--pen-width-max-mm", type=float, default=None, help="A4 pen max width in mm (default=0.8)")
-    parser.add_argument("--precond-min-path-length", type=int, default=None, help="Preconditioning min skeleton polyline length; default=4 for TEED")
-    parser.add_argument("--precond-max-path-length", type=int, default=None, help="Preconditioning max skeleton polyline length; default=64 for TEED")
-    parser.add_argument("--precond-min-component-area", type=int, default=None, help="Remove edge components smaller than this area; default=0 for TEED")
-    parser.add_argument("--precond-morph-open-radius", type=int, default=None, help="Edge mask binary opening radius; default=0 for TEED")
-    parser.add_argument("--precond-morph-close-radius", type=int, default=None, help="Edge mask binary closing radius; default=0 for TEED")
-    parser.add_argument("--precond-merge-polylines", action="store_true", default=None, help="Merge aligned precondition polylines")
-    parser.add_argument("--precond-merge-distance", type=float, default=None, help="Merge distance in pixels (default from config)")
-    parser.add_argument("--precond-merge-angle-deg", type=float, default=None, help="Merge angle threshold in degrees (default from config)")
-    parser.add_argument("--precond-force-open-paths", action="store_true", default=None, help="Force open stroke paths (avoid closed loops)")
+    parser.add_argument("--max-paths", dest="max_paths", type=int, default=None, help="Cap number of preconditioned paths (default from config)")
+    parser.add_argument("--precond-max-paths", dest="max_paths", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--min-path-length", dest="min_path_length", type=int, default=None, help="Minimum skeleton polyline length in pixels")
+    parser.add_argument("--precond-min-path-length", dest="min_path_length", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--max-path-length", dest="max_path_length", type=int, default=None, help="Maximum skeleton polyline length in pixels (smaller splits long paths)")
+    parser.add_argument("--precond-max-path-length", dest="max_path_length", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--min-component-area", dest="min_component_area", type=int, default=None, help="Remove edge components smaller than this area (pixels)")
+    parser.add_argument("--precond-min-component-area", dest="min_component_area", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--morph-open-radius", dest="morph_open_radius", type=int, default=None, help="Binary opening radius applied to edge mask")
+    parser.add_argument("--precond-morph-open-radius", dest="morph_open_radius", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--morph-close-radius", dest="morph_close_radius", type=int, default=None, help="Binary closing radius applied to edge mask")
+    parser.add_argument("--precond-morph-close-radius", dest="morph_close_radius", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--merge-polylines", dest="merge_polylines", action="store_true", default=None, help="Merge aligned precondition polylines")
+    parser.add_argument("--precond-merge-polylines", dest="merge_polylines", action="store_true", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--merge-distance", dest="merge_distance", type=float, default=None, help="Merge distance in pixels (default from config)")
+    parser.add_argument("--precond-merge-distance", dest="merge_distance", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--merge-angle-deg", dest="merge_angle_deg", type=float, default=None, help="Merge angle threshold in degrees (default from config)")
+    parser.add_argument("--precond-merge-angle-deg", dest="merge_angle_deg", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--force-open-paths", dest="force_open_paths", action="store_true", default=None, help="Force open stroke paths (avoid closed loops)")
+    parser.add_argument("--precond-force-open-paths", dest="force_open_paths", action="store_true", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--precond-target-paths-min",
         type=int,
@@ -612,8 +568,10 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Target maximum path count for auto-scaling (default: PRECONDITION_TARGET_PATHS_MAX_DEFAULT)",
     )
-    parser.add_argument("--precond-base-stroke-width", type=float, default=None, help="Precondition base stroke width; default=0.5 for TEED")
-    parser.add_argument("--precond-max-stroke-width", type=float, default=None, help="Precondition max stroke width; default=1.0 for TEED (clamped to --max_width)")
+    parser.add_argument("--base-stroke-width", dest="base_stroke_width", type=float, default=None, help="Base stroke width for preconditioned paths")
+    parser.add_argument("--precond-base-stroke-width", dest="base_stroke_width", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--max-stroke-width", dest="max_stroke_width", type=float, default=None, help="Max stroke width for preconditioned paths (clamped to --max_width)")
+    parser.add_argument("--precond-max-stroke-width", dest="max_stroke_width", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--fixed-stroke", action="store_true", help="Fix all stroke colors to black ink (disables color optimization)")
     parser.add_argument("--fixed-stroke-alpha", type=float, default=0.9, help="Alpha for --fixed-stroke (0..1)")
     parser.add_argument("--fixed-stroke-width", type=float, default=None, help="Fix all stroke widths to a constant (disables width optimization)")

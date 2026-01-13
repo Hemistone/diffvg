@@ -29,6 +29,23 @@ from .vectorize import (
 _DEFAULT_INK_RGBA = (0.0, 0.0, 0.0, 0.94)
 
 
+def _safe_quantile(values: np.ndarray, q: float) -> float:
+    q = max(0.0, min(1.0, float(q)))
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.size == 0:
+        return 0.0
+    try:
+        t = torch.from_numpy(arr).reshape(-1)
+        return float(torch.quantile(t, q).item())
+    except Exception:
+        flat = np.sort(arr.reshape(-1))
+        if flat.size == 0:
+            return 0.0
+        idx = int(round((flat.size - 1) * q))
+        idx = max(0, min(flat.size - 1, idx))
+        return float(flat[idx])
+
+
 def _simple_kmeans(flat: np.ndarray, k: int, iters: int = 8) -> Tuple[np.ndarray, np.ndarray]:
     """Tiny KMeans fallback to avoid heavy dependencies."""
     n = flat.shape[0]
@@ -58,7 +75,7 @@ def _quantize_palette(image: np.ndarray, cfg: PreconditionConfig) -> Tuple[np.nd
         if mode == "quantile":
             q = float(cfg.lineart_threshold_quantile)
             q = max(0.0, min(1.0, q))
-            thresh = float(np.quantile(gray, q))
+            thresh = _safe_quantile(gray, q)
         elif mode == "otsu":
             thresh = float(filters.threshold_otsu(gray))
         elif mode == "fixed":

@@ -204,6 +204,87 @@ def apply_teed_settings(
         raise ValueError(message)
 
 
+def build_precondition_config(
+    args,
+    *,
+    default_teed_weights_path: str | None = None,
+    require_teed_weights: bool = False,
+    missing_weights_message: str | None = None,
+    max_paths_fallback: int | None = None,
+    clamp_max_width: float | None = None,
+) -> PreconditionConfig:
+    cfg = PreconditionConfig()
+    apply_pen_widths(
+        cfg,
+        stroke_width_mode=getattr(args, "stroke_width_mode", None),
+        pen_min_mm=getattr(args, "pen_width_min_mm", None),
+        pen_max_mm=getattr(args, "pen_width_max_mm", None),
+    )
+    apply_fixed_stroke_config(
+        cfg,
+        enabled=getattr(args, "fixed_stroke", False),
+        alpha=getattr(args, "fixed_stroke_alpha", None),
+    )
+    apply_lineart_settings(
+        cfg,
+        threshold_mode=getattr(args, "lineart_threshold_mode", None),
+        threshold_quantile=getattr(args, "lineart_threshold_quantile", None),
+        threshold=getattr(args, "lineart_threshold", None),
+    )
+    arg_max_paths = getattr(args, "max_paths", None)
+    apply_precondition_cleanup(
+        cfg,
+        max_paths=arg_max_paths,
+        min_path_length=getattr(args, "min_path_length", None),
+        max_path_length=getattr(args, "max_path_length", None),
+        min_component_area=getattr(args, "min_component_area", None),
+        morph_open_radius=getattr(args, "morph_open_radius", None),
+        morph_close_radius=getattr(args, "morph_close_radius", None),
+    )
+    apply_precondition_scaling(
+        cfg,
+        target_paths_min=getattr(args, "precond_target_paths_min", None),
+        target_paths_max=getattr(args, "precond_target_paths_max", None),
+    )
+    apply_stroke_widths(
+        cfg,
+        base_stroke_width=getattr(args, "base_stroke_width", None),
+        max_stroke_width=getattr(args, "max_stroke_width", None),
+        clamp_max_width=clamp_max_width,
+    )
+    apply_polyline_settings(
+        cfg,
+        merge_polylines=getattr(args, "merge_polylines", None),
+        merge_distance=getattr(args, "merge_distance", None),
+        merge_angle_deg=getattr(args, "merge_angle_deg", None),
+        force_open_paths=getattr(args, "force_open_paths", None),
+    )
+    cfg.mode = (getattr(args, "precond_mode", "xdog") or "xdog").strip().lower()
+    if cfg.mode not in ("xdog", "teed", "lineart"):
+        raise ValueError(f"Unsupported --precond-mode '{cfg.mode}'. Choose from: xdog, teed, lineart")
+    if cfg.mode == "teed":
+        apply_teed_settings(
+            cfg,
+            weights_path=getattr(args, "teed_weights", None),
+            default_weights_path=default_teed_weights_path,
+            detect_res=getattr(args, "teed_detect_res", None),
+            threshold=getattr(args, "teed_threshold", None),
+            safe_steps=getattr(args, "teed_safe_steps", None),
+            threshold_mode=getattr(args, "teed_threshold_mode", None),
+            hysteresis_low_ratio=getattr(args, "teed_hysteresis_low_ratio", None),
+            threshold_quantile=getattr(args, "teed_threshold_quantile", None),
+            lineart_enabled=getattr(args, "teed_lineart", None),
+            lineart_blur_sigma=getattr(args, "teed_lineart_blur_sigma", None),
+            lineart_strength=getattr(args, "teed_lineart_strength", None),
+            lineart_combine=getattr(args, "teed_lineart_combine", None),
+            require_weights=require_teed_weights,
+            missing_weights_message=missing_weights_message,
+        )
+    if max_paths_fallback is not None and arg_max_paths is None:
+        cfg.max_paths = int(max_paths_fallback)
+    return cfg
+
+
 def apply_lineart_settings(
     cfg: PreconditionConfig,
     *,
@@ -220,6 +301,7 @@ def apply_lineart_settings(
 
 
 __all__ = [
+    "build_precondition_config",
     "apply_fixed_stroke_config",
     "apply_precondition_scaling",
     "apply_polyline_settings",

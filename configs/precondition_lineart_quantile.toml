@@ -1,6 +1,7 @@
-# Precondition-only lineart preset using quantile thresholding.
+# Shared lineart preset using quantile thresholding.
 # Uses argparse dest names (underscores), not CLI flag names.
 
+precondition = true
 precond_mode = "lineart"
 lineart_threshold_mode = "quantile"
 lineart_threshold_quantile = 0.2 # Higher -> more ink coverage/paths, lower -> sparser strokes

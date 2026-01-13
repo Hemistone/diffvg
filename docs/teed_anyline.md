@@ -158,8 +158,8 @@ Anyline을 “바로 통째로” 붙이기보다, 아래 순서로 가는 편�
   * `teed_lineart` + `teed_lineart_blur_sigma/strength/combine`로 blur+screen/max/add 보강 지원
 * Threshold 고급화 확장: **적용**
   * `teed_threshold_mode=quantile|otsu` + `teed_threshold_quantile` 추가
-  * quantile preset: `configs/precondition_vectorize_teed_detail_quantile.toml`, `configs/painterly_teed_detail_quantile.toml`
-  * otsu preset: `configs/precondition_vectorize_teed_detail_otsu.toml`, `configs/painterly_teed_detail_otsu.toml`
+  * quantile preset: `configs/precondition_teed_detail_quantile.toml`
+  * otsu preset: `configs/precondition_teed_detail_otsu.toml`
 * Skeleton/Polyline 품질 개선: **부분 적용**
   * `merge_polylines` + `merge_distance/merge_angle_deg` 옵션으로 단편 merge
   * `force_open_paths`로 splat 폐곡선 회피
