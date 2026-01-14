@@ -30,6 +30,12 @@ Lineart preconditioning (painterly):
 python apps/painterly_rendering.py --config configs/precondition_lineart_quantile.toml imgs/scream.jpg
 ```
 
+Flowline preconditioning (painterly):
+
+```bash
+python apps/painterly_rendering.py --config configs/precondition_flowline.toml imgs/scream.jpg
+```
+
 Precondition-only debug run:
 
 ```bash
@@ -45,6 +51,12 @@ Lineart preconditioning (precondition-only):
 python apps/precondition_vectorize.py --config configs/precondition_lineart_quantile.toml imgs/scream.jpg
 ```
 
+Flowline preconditioning (precondition-only):
+
+```bash
+python apps/precondition_vectorize.py --config configs/precondition_flowline.toml imgs/scream.jpg
+```
+
 ## Presets
 
 - `precondition_teed.toml`: baseline TEED defaults for shared preconditioning.
@@ -52,6 +64,7 @@ python apps/precondition_vectorize.py --config configs/precondition_lineart_quan
 - `precondition_teed_detail_quantile.toml`: detail preset using quantile thresholding.
 - `precondition_teed_detail_otsu.toml`: detail preset using Otsu thresholding.
 - `precondition_lineart_quantile.toml`: lineart preset using quantile thresholding.
+- `precondition_flowline.toml`: flowline preset using TEED edge strength.
 
 ## Notes
 

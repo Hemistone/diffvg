@@ -16,6 +16,7 @@ from .edge import compute_edge_mask
 from .skeleton import skeletonize_edges, skeleton_to_polylines
 from .vectorize import merge_polylines, polylines_to_paths
 from .lineart import build_lineart_scene
+from .flowline import flowline_polylines
 from .teed import teed_edge_strength, teed_mask_from_strength
 
 _AUTO_MIN_SIDE_FLOOR = 128  # Prevent overly tiny edge maps.
@@ -138,6 +139,9 @@ def _precondition_raw_count(
     if cfg.mode == "lineart":
         shapes, _, _, _ = build_lineart_scene(rgb, cfg, device=device)
         return len(shapes)
+    if cfg.mode == "flowline":
+        _, polylines = flowline_polylines(rgb, cfg, device=device)
+        return len(polylines)
     # Disable TEED auto-tune here so auto-scaling doesn't fight threshold tuning.
     _, _, polylines = _edges_and_polylines(
         rgb,
@@ -298,6 +302,18 @@ def build_preconditioned_scene(
     if cfg.mode == "lineart":
         shapes, groups, edge_mask, skeleton = build_lineart_scene(rgb_proc, cfg, device=device)
         polylines: list[list[tuple[int, int]]] = []
+    elif cfg.mode == "flowline":
+        edge_strength, polylines = flowline_polylines(rgb_proc, cfg, device=device)
+        edge_mask = edge_strength.astype(np.float32, copy=False)
+        skeleton = np.zeros_like(edge_mask, dtype=np.float32)
+        shapes, groups = polylines_to_paths(
+            polylines,
+            rgb_proc,
+            cfg,
+            canvas_w=proc_w,
+            canvas_h=proc_h,
+            device=device,
+        )
     else:
         edge_mask, skeleton, polylines = _edges_and_polylines(rgb_proc, cfg, device=device)
         shapes, groups = polylines_to_paths(

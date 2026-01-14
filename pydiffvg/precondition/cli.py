@@ -204,6 +204,54 @@ def apply_teed_settings(
         raise ValueError(message)
 
 
+def apply_flowline_settings(
+    cfg: PreconditionConfig,
+    *,
+    edge_backend: str | None = None,
+    seed_mode: str | None = None,
+    seed_quantile: float | None = None,
+    seed_threshold: float | None = None,
+    min_strength: float | None = None,
+    step_px: float | None = None,
+    max_len: int | None = None,
+    min_len: int | None = None,
+    min_seed_dist: int | None = None,
+    curvature_deg: float | None = None,
+    field_sigma: float | None = None,
+    field_iters: int | None = None,
+    coverage_decay: float | None = None,
+    coverage_radius: int | None = None,
+) -> None:
+    if edge_backend is not None:
+        cfg.flow_edge_backend = str(edge_backend)
+    if seed_mode is not None:
+        cfg.flow_seed_mode = str(seed_mode)
+    if seed_quantile is not None:
+        cfg.flow_seed_quantile = float(seed_quantile)
+    if seed_threshold is not None:
+        cfg.flow_seed_threshold = float(seed_threshold)
+    if min_strength is not None:
+        cfg.flow_min_strength = float(min_strength)
+    if step_px is not None:
+        cfg.flow_step_px = float(step_px)
+    if max_len is not None:
+        cfg.flow_max_len = int(max_len)
+    if min_len is not None:
+        cfg.flow_min_len = int(min_len)
+    if min_seed_dist is not None:
+        cfg.flow_min_seed_dist = int(min_seed_dist)
+    if curvature_deg is not None:
+        cfg.flow_curvature_deg = float(curvature_deg)
+    if field_sigma is not None:
+        cfg.flow_field_sigma = float(field_sigma)
+    if field_iters is not None:
+        cfg.flow_field_iters = int(field_iters)
+    if coverage_decay is not None:
+        cfg.flow_coverage_decay = float(coverage_decay)
+    if coverage_radius is not None:
+        cfg.flow_coverage_radius = int(coverage_radius)
+
+
 def build_precondition_config(
     args,
     *,
@@ -230,6 +278,23 @@ def build_precondition_config(
         threshold_mode=getattr(args, "lineart_threshold_mode", None),
         threshold_quantile=getattr(args, "lineart_threshold_quantile", None),
         threshold=getattr(args, "lineart_threshold", None),
+    )
+    apply_flowline_settings(
+        cfg,
+        edge_backend=getattr(args, "flow_edge_backend", None),
+        seed_mode=getattr(args, "flow_seed_mode", None),
+        seed_quantile=getattr(args, "flow_seed_quantile", None),
+        seed_threshold=getattr(args, "flow_seed_threshold", None),
+        min_strength=getattr(args, "flow_min_strength", None),
+        step_px=getattr(args, "flow_step_px", None),
+        max_len=getattr(args, "flow_max_len", None),
+        min_len=getattr(args, "flow_min_len", None),
+        min_seed_dist=getattr(args, "flow_min_seed_dist", None),
+        curvature_deg=getattr(args, "flow_curvature_deg", None),
+        field_sigma=getattr(args, "flow_field_sigma", None),
+        field_iters=getattr(args, "flow_field_iters", None),
+        coverage_decay=getattr(args, "flow_coverage_decay", None),
+        coverage_radius=getattr(args, "flow_coverage_radius", None),
     )
     arg_max_paths = getattr(args, "max_paths", None)
     apply_precondition_cleanup(
@@ -260,9 +325,14 @@ def build_precondition_config(
         force_open_paths=getattr(args, "force_open_paths", None),
     )
     cfg.mode = (getattr(args, "precond_mode", "xdog") or "xdog").strip().lower()
-    if cfg.mode not in ("xdog", "teed", "lineart"):
-        raise ValueError(f"Unsupported --precond-mode '{cfg.mode}'. Choose from: xdog, teed, lineart")
-    if cfg.mode == "teed":
+    if cfg.mode not in ("xdog", "teed", "lineart", "flowline"):
+        raise ValueError(
+            f"Unsupported --precond-mode '{cfg.mode}'. Choose from: xdog, teed, lineart, flowline"
+        )
+    needs_teed = cfg.mode == "teed" or (
+        cfg.mode == "flowline" and (cfg.flow_edge_backend or "teed").strip().lower() == "teed"
+    )
+    if needs_teed:
         apply_teed_settings(
             cfg,
             weights_path=getattr(args, "teed_weights", None),
@@ -309,6 +379,7 @@ __all__ = [
     "apply_precondition_cleanup",
     "apply_stroke_widths",
     "apply_teed_settings",
+    "apply_flowline_settings",
     "apply_lineart_settings",
     "resolve_teed_weights_path",
 ]

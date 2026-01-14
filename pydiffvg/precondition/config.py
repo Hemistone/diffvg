@@ -77,7 +77,7 @@ class PreconditionConfig:
     sort_by: str = "darkness_length"  # or "length"
 
     # Preconditioning mode
-    mode: str = "xdog"  # "xdog", "teed", or "lineart"
+    mode: str = "xdog"  # "xdog", "teed", "lineart", or "flowline"
     num_colors: int = 1
     palette_mode: str = "auto"  # "auto" or "fixed"
     palette_colors: list[tuple[float, float, float]] | None = None
@@ -87,6 +87,22 @@ class PreconditionConfig:
     lineart_threshold_mode: str = "quantile"  # "quantile", "otsu", or "fixed"
     lineart_threshold_quantile: float = 0.25
     lineart_threshold: float = 0.5
+
+    # Flowline (path growing) parameters
+    flow_edge_backend: str = "teed"  # "teed" or "xdog"
+    flow_seed_mode: str = "quantile"  # "quantile" or "fixed"
+    flow_seed_quantile: float = 0.85
+    flow_seed_threshold: float = 0.2
+    flow_min_strength: float = 0.2
+    flow_step_px: float = 1.0
+    flow_max_len: int = 256
+    flow_min_len: int = 8
+    flow_min_seed_dist: int = 6
+    flow_curvature_deg: float = 60.0
+    flow_field_sigma: float = 2.0
+    flow_field_iters: int = 1
+    flow_coverage_decay: float = 0.85
+    flow_coverage_radius: int = 2
 
 
 __all__ = [

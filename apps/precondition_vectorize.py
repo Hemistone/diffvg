@@ -102,7 +102,13 @@ def main() -> None:
     parser.add_argument("--precondition", action="store_true", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--max_width", dest="max_width", type=float, default=None, help="Clamp precondition stroke widths (matches painterly --max_width)")
     parser.add_argument("--max-width", dest="max_width", type=float, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--precond-mode", type=str, default="xdog", choices=["xdog", "teed", "lineart"], help="Preconditioning mode")
+    parser.add_argument(
+        "--precond-mode",
+        type=str,
+        default="xdog",
+        choices=["xdog", "teed", "lineart", "flowline"],
+        help="Preconditioning mode",
+    )
     parser.add_argument("--lineart-threshold-mode", type=str, default=None, choices=["quantile", "otsu", "fixed"], help="Lineart threshold mode")
     parser.add_argument("--lineart-threshold-quantile", type=float, default=None, help="Quantile used for lineart threshold (0..1)")
     parser.add_argument("--lineart-threshold", type=float, default=None, help="Fixed threshold for lineart mode (0..1)")
@@ -117,6 +123,32 @@ def main() -> None:
     parser.add_argument("--teed-lineart-blur-sigma", type=float, default=None, help="Gaussian sigma for lineart intensity (default from config)")
     parser.add_argument("--teed-lineart-strength", type=float, default=None, help="Strength for lineart intensity boost (default from config)")
     parser.add_argument("--teed-lineart-combine", type=str, default=None, choices=["screen", "max", "add"], help="Combine TEED + lineart intensity")
+    parser.add_argument(
+        "--flow-edge-backend",
+        type=str,
+        default=None,
+        choices=["teed", "xdog"],
+        help="Edge backend for flowline mode",
+    )
+    parser.add_argument(
+        "--flow-seed-mode",
+        type=str,
+        default=None,
+        choices=["quantile", "fixed"],
+        help="Seed selection mode for flowline",
+    )
+    parser.add_argument("--flow-seed-quantile", type=float, default=None, help="Quantile for flowline seeds (0..1)")
+    parser.add_argument("--flow-seed-threshold", type=float, default=None, help="Fixed threshold for flowline seeds (0..1)")
+    parser.add_argument("--flow-min-strength", type=float, default=None, help="Minimum edge strength to keep tracing (0..1)")
+    parser.add_argument("--flow-step-px", type=float, default=None, help="Step size in pixels when tracing flowlines")
+    parser.add_argument("--flow-max-len", type=int, default=None, help="Maximum steps per flowline")
+    parser.add_argument("--flow-min-len", type=int, default=None, help="Minimum steps per flowline")
+    parser.add_argument("--flow-min-seed-dist", type=int, default=None, help="Minimum seed distance (pixels)")
+    parser.add_argument("--flow-curvature-deg", type=float, default=None, help="Max curvature between steps (degrees)")
+    parser.add_argument("--flow-field-sigma", type=float, default=None, help="Gaussian sigma for flow field smoothing")
+    parser.add_argument("--flow-field-iters", type=int, default=None, help="Gaussian smoothing iterations for flow field")
+    parser.add_argument("--flow-coverage-decay", type=float, default=None, help="Strength decay around traced paths (0..1)")
+    parser.add_argument("--flow-coverage-radius", type=int, default=None, help="Radius in pixels for coverage decay")
     parser.add_argument("--stroke-width-mode", type=str, default=None, choices=["absolute", "a4_pen"], help="Stroke width mode for preconditioning")
     parser.add_argument("--pen-width-min-mm", type=float, default=None, help="A4 pen min width in mm (default=0.35)")
     parser.add_argument("--pen-width-max-mm", type=float, default=None, help="A4 pen max width in mm (default=0.8)")
