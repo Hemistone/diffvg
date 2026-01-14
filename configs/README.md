@@ -18,53 +18,53 @@ Key mapping examples:
 Painterly rendering (full optimization):
 
 ```bash
-python apps/painterly_rendering.py --config configs/precondition_teed.toml imgs/scream.jpg
+python apps/painterly_rendering.py --config configs/precondition/teed.toml imgs/scream.jpg
 ```
 
 Note: `apps/painterly_rendering.py` defaults to
-`configs/precondition_teed_detail_quantile.toml` when `--config` is omitted.
+`configs/precondition/teed_detail_quantile.toml` when `--config` is omitted.
 
 Lineart preconditioning (painterly):
 
 ```bash
-python apps/painterly_rendering.py --config configs/precondition_lineart_quantile.toml imgs/scream.jpg
+python apps/painterly_rendering.py --config configs/precondition/lineart_quantile.toml imgs/scream.jpg
 ```
 
 Flowline preconditioning (painterly):
 
 ```bash
-python apps/painterly_rendering.py --config configs/precondition_flowline.toml imgs/scream.jpg
+python apps/painterly_rendering.py --config configs/precondition/flowline.toml imgs/scream.jpg
 ```
 
 Precondition-only debug run:
 
 ```bash
-python apps/precondition_vectorize.py --config configs/precondition_teed.toml imgs/scream.jpg
+python apps/precondition_vectorize.py --config configs/precondition/teed.toml imgs/scream.jpg
 ```
 
 Note: `apps/precondition_vectorize.py` defaults to
-`configs/precondition_teed_detail_quantile.toml` when `--config` is omitted.
+`configs/precondition/teed_detail_quantile.toml` when `--config` is omitted.
 
 Lineart preconditioning (precondition-only):
 
 ```bash
-python apps/precondition_vectorize.py --config configs/precondition_lineart_quantile.toml imgs/scream.jpg
+python apps/precondition_vectorize.py --config configs/precondition/lineart_quantile.toml imgs/scream.jpg
 ```
 
 Flowline preconditioning (precondition-only):
 
 ```bash
-python apps/precondition_vectorize.py --config configs/precondition_flowline.toml imgs/scream.jpg
+python apps/precondition_vectorize.py --config configs/precondition/flowline.toml imgs/scream.jpg
 ```
 
 ## Presets
 
-- `precondition_teed.toml`: baseline TEED defaults for shared preconditioning.
-- `precondition_teed_detail.toml`: higher detect resolution, lower threshold, longer paths.
-- `precondition_teed_detail_quantile.toml`: detail preset using quantile thresholding.
-- `precondition_teed_detail_otsu.toml`: detail preset using Otsu thresholding.
-- `precondition_lineart_quantile.toml`: lineart preset using quantile thresholding.
-- `precondition_flowline.toml`: flowline preset using TEED edge strength.
+- `precondition/teed.toml`: baseline TEED defaults for shared preconditioning.
+- `precondition/teed_detail.toml`: higher detect resolution, lower threshold, longer paths.
+- `precondition/teed_detail_quantile.toml`: detail preset using quantile thresholding.
+- `precondition/teed_detail_otsu.toml`: detail preset using Otsu thresholding.
+- `precondition/lineart_quantile.toml`: lineart preset using quantile thresholding.
+- `precondition/flowline.toml`: flowline preset using TEED edge strength.
 
 ## Notes
 
@@ -74,7 +74,7 @@ python apps/precondition_vectorize.py --config configs/precondition_flowline.tom
   (there is no `--no-...` flag yet). Use a different preset if you need them off.
 - `max_paths` caps the number of preconditioned paths; painterly will fall back
   to `num_paths` when `max_paths` is not set.
-- Empirical note: on `papers/karina2.jpg`, `precondition_teed_detail_quantile.toml`
+- Empirical note: on `papers/karina2.jpg`, `precondition/teed_detail_quantile.toml`
   produced the most pleasing preconditioning results.
 
 ## Stroke Width Mode

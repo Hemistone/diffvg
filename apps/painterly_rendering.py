@@ -533,7 +533,7 @@ def main(args):
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    default_config = "configs/precondition_teed_detail_quantile.toml"
+    default_config = "configs/precondition/teed_detail_quantile.toml"
     parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num_paths", type=int, default=512)

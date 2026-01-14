@@ -1,0 +1,24 @@
+# Shared preconditioning TEED preset.
+# Uses argparse dest names (underscores), not CLI flag names.
+# Positional args like "target"/"image" are not set here.
+
+precondition = true
+precond_mode = "teed"
+teed_weights = "weights/teed/5_model.pth"
+teed_detect_res = 512
+teed_threshold = 0.30
+teed_safe_steps = 0
+
+# Precondition cleanup
+min_path_length = 4
+max_path_length = 64
+min_component_area = 0
+morph_open_radius = 0
+morph_close_radius = 0
+stroke_width_mode = "a4_pen"
+pen_width_min_mm = 0.35
+pen_width_max_mm = 0.8
+
+# Optional: fixed ink pass (disable color optimization)
+fixed_stroke = false
+fixed_stroke_alpha = 0.9

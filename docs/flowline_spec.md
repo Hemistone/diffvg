@@ -123,7 +123,7 @@ for seed in seeds_sorted:
 3. Update `init_paths.py` to branch:
    - if `cfg.mode == "flowline"` → use flowline module → polylines → paths
 4. Add CLI flags in `apps/painterly_rendering.py` and `apps/precondition_vectorize.py`.
-5. Add preset under `configs/precondition_flowline.toml` (baseline settings).
+5. Add preset under `configs/precondition/flowline.toml` (baseline settings).
 
 ---
 
