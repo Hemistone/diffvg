@@ -158,9 +158,15 @@ def polylines_to_paths(
     canvas_w: int,
     canvas_h: int,
     device: torch.device,
+    *,
+    palette_canvas_w: int | None = None,
+    palette_canvas_h: int | None = None,
 ) -> tuple[list[pydiffvg.Path], list[pydiffvg.ShapeGroup]]:
     """Convert traced polylines to diffvg shapes."""
     _ = (canvas_w, canvas_h)  # reserved for future scaling/normalization
+    palette_canvas_w = palette_canvas_w or canvas_w
+    palette_canvas_h = palette_canvas_h or canvas_h
+    palette = cfg.palette
     if image_rgb.ndim != 3 or image_rgb.shape[2] < 3:
         raise ValueError("image_rgb must be HxWx3")
 
@@ -206,6 +212,9 @@ def polylines_to_paths(
         width = cfg.base_stroke_width + (cfg.max_stroke_width - cfg.base_stroke_width) * (darkness ** cfg.stroke_width_gamma)
         if (cfg.mode or "xdog").strip().lower() == "xdog":
             width *= float(cfg.xdog_stroke_width_scale)
+        entry = None
+        if palette is not None:
+            entry, width, _ = palette.entry_for_width(width, palette_canvas_w, palette_canvas_h)
         stroke_width = torch.tensor(width, dtype=torch.float32, device=device)
 
         path = pydiffvg.Path(
@@ -218,7 +227,10 @@ def polylines_to_paths(
         )
         shapes.append(path)
 
-        if cfg.fixed_stroke_rgba is not None:
+        if entry is not None:
+            rgba = np.array(entry.color_rgba, dtype=np.float32)
+            stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
+        elif cfg.fixed_stroke_rgba is not None:
             rgba = np.array(cfg.fixed_stroke_rgba, dtype=np.float32)
             rgba = np.clip(rgba, 0.0, 1.0)
             stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)

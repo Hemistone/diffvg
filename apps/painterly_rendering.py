@@ -22,6 +22,7 @@ import torch
 
 from single_utils import create_run_context, log_run_configuration
 from pydiffvg.precondition.cli import build_precondition_config
+from pydiffvg.palette import load_palette
 
 
 def _default_teed_weights_path() -> str | None:
@@ -97,6 +98,10 @@ def main(args):
     fixed_stroke = bool(getattr(args, "fixed_stroke", False))
     fixed_stroke_alpha = float(getattr(args, "fixed_stroke_alpha", 0.9))
     fixed_stroke_width = getattr(args, "fixed_stroke_width", None)
+    palette = None
+    palette_ref = getattr(args, "palette", None)
+    if palette_ref:
+        palette = load_palette(palette_ref)
 
     # Build loss function
     device = pydiffvg.get_device()
@@ -221,6 +226,7 @@ def main(args):
         "fixed_stroke": fixed_stroke if not args.use_blob else None,
         "fixed_stroke_alpha": fixed_stroke_alpha if (fixed_stroke and not args.use_blob) else None,
         "fixed_stroke_width": fixed_stroke_width if not args.use_blob else None,
+        "palette": palette.name if palette is not None else None,
         "target": str(target_path),
         "canvas": f"{canvas_width}x{canvas_height}",
         "paths": num_paths,
@@ -319,6 +325,8 @@ def main(args):
             max_paths_fallback=num_paths,
             clamp_max_width=max_width,
         )
+        if palette is not None:
+            cfg.palette = palette
         pre = pydiffvg.build_preconditioned_scene(
             args.target,
             cfg=cfg,
@@ -375,6 +383,9 @@ def main(args):
                 stroke_width=torch.tensor(1.0, device=device),
                 is_closed=args.use_blob,
             )
+            if palette is not None and not args.use_blob:
+                entry, entry_width, _ = palette.entry_for_index(i, canvas_width, canvas_height)
+                path.stroke_width = torch.tensor(entry_width, device=device)
             shapes.append(path)
             if args.use_blob:
                 path_group = pydiffvg.ShapeGroup(
@@ -385,7 +396,11 @@ def main(args):
                     ),
                 )
             else:
-                if fixed_stroke:
+                if palette is not None:
+                    entry, _, _ = palette.entry_for_index(i, canvas_width, canvas_height)
+                    rgba = entry.color_rgba
+                    stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], device=device)
+                elif fixed_stroke:
                     stroke_color = torch.tensor([0.0, 0.0, 0.0, max(0.0, min(1.0, fixed_stroke_alpha))], device=device)
                 else:
                     stroke_color = torch.tensor(
@@ -424,7 +439,7 @@ def main(args):
     init_rgb = _rgba_over_white(img)
     pydiffvg.imwrite(init_rgb.cpu(), str(run.results_dir / "init.png"), gamma=gamma)
 
-    if fixed_stroke_width is not None and not args.use_blob:
+    if fixed_stroke_width is not None and not args.use_blob and palette is None:
         fixed_w = float(fixed_stroke_width)
         if fixed_w <= 0:
             raise ValueError("--fixed-stroke-width must be > 0.")
@@ -438,7 +453,7 @@ def main(args):
     for path in shapes:
         path.points.requires_grad = True
         points_vars.append(path.points)
-    if not args.use_blob and fixed_stroke_width is None:
+    if not args.use_blob and fixed_stroke_width is None and palette is None:
         for path in shapes:
             path.stroke_width.requires_grad = True
             stroke_width_vars.append(path.stroke_width)
@@ -447,7 +462,7 @@ def main(args):
             group.fill_color.requires_grad = True
             color_vars.append(group.fill_color)
     else:
-        if not fixed_stroke:
+        if not fixed_stroke and palette is None:
             for group in shape_groups:
                 group.stroke_color.requires_grad = True
                 color_vars.append(group.stroke_color)
@@ -535,6 +550,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     default_config = "configs/precondition/teed_detail_quantile.toml"
     parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
+    parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num_paths", type=int, default=512)
     parser.add_argument("--max_width", type=float, default=2.0)

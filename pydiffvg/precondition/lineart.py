@@ -155,13 +155,14 @@ def build_lineart_scene(
     device: torch.device,
     max_paths: int | None = None,
 ) -> Tuple[List[pydiffvg.Path], List[pydiffvg.ShapeGroup], np.ndarray, np.ndarray]:
+    palette = cfg.palette
     palette, labels = _quantize_palette(image_rgb, cfg)
     all_shapes: List[pydiffvg.Path] = []
     all_groups: List[pydiffvg.ShapeGroup] = []
     edge_union = np.zeros(labels.shape, dtype=bool)
     skel_union = np.zeros_like(edge_union)
     gray = image_rgb[..., :3].mean(axis=2)
-    scored: List[Tuple[float, List[Tuple[int, int]], np.ndarray]] = []
+    scored: List[Tuple[float, List[Tuple[int, int]], int, np.ndarray]] = []
     score_mode = (cfg.sort_by or "darkness_length").strip().lower()
 
     for color_idx, color in enumerate(palette):
@@ -179,7 +180,7 @@ def build_lineart_scene(
         polylines = merge_polylines(polylines, cfg, enabled=cfg.merge_polylines)
         for poly in polylines:
             score = _score_polyline(poly, gray, score_mode)
-            scored.append((score, poly, color))
+            scored.append((score, poly, color_idx, color))
 
     scored.sort(key=lambda t: t[0], reverse=True)
     if max_paths is None:
@@ -188,14 +189,22 @@ def build_lineart_scene(
         max_paths = max(0, int(max_paths))
         scored = scored[:max_paths]
 
-    for _, poly, color in scored:
+    canvas_h, canvas_w = image_rgb.shape[:2]
+    for _, poly, color_idx, color in scored:
         path = _path_from_polyline(poly, cfg, device)
         if path is None:
             continue
         shape_index = len(all_shapes)
         path.id = f"lineart_path_{shape_index}"
+        entry = None
+        if palette is not None:
+            entry, entry_width, _ = palette.entry_for_index(color_idx, canvas_w, canvas_h)
+            path.stroke_width = torch.tensor(entry_width, dtype=torch.float32, device=device)
         all_shapes.append(path)
-        if cfg.fixed_stroke_rgba is not None:
+        if entry is not None:
+            rgba = np.array(entry.color_rgba, dtype=np.float32)
+            stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
+        elif cfg.fixed_stroke_rgba is not None:
             rgba = np.array(cfg.fixed_stroke_rgba, dtype=np.float32)
             rgba = np.clip(rgba, 0.0, 1.0)
             stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)

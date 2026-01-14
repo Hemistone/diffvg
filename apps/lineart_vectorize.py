@@ -10,6 +10,7 @@ import torch
 from PIL import Image
 
 import pydiffvg
+from pydiffvg.palette import load_palette
 
 
 def _load_rgb(path: Path) -> np.ndarray:
@@ -31,6 +32,7 @@ def main() -> None:
     parser.add_argument("--smooth-window", type=int, default=5, help="Moving-average window for smoothing")
     parser.add_argument("--refine-iters", type=int, default=0, help="Optional short diffvg refinement steps")
     parser.add_argument("--out-dir", type=Path, default=Path("results/lineart_vectorize"), help="Output directory")
+    parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
     args = parser.parse_args()
 
     pydiffvg.set_backend(args.backend)
@@ -48,6 +50,8 @@ def main() -> None:
         smooth_window=args.smooth_window,
         curve_mode="bezier",
     )
+    if args.palette:
+        cfg.palette = load_palette(args.palette)
     scene = pydiffvg.build_preconditioned_scene(args.image, cfg=cfg, backend=args.backend, device=device)
 
     # Render initial vectorization

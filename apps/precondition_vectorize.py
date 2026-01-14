@@ -24,6 +24,7 @@ from PIL import Image
 
 import pydiffvg
 from pydiffvg.precondition.cli import build_precondition_config
+from pydiffvg.palette import load_palette
 
 
 def _default_teed_weights_path() -> str | None:
@@ -97,6 +98,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Precondition raster -> diffvg paths (no optimization).")
     default_config = "configs/precondition/teed_detail_quantile.toml"
     parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
+    parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
     parser.add_argument("image", type=Path, help="Input raster image")
     parser.add_argument("--backend", default="splat", choices=["baseline", "splat"], help="Render backend to use")
     parser.add_argument("--precondition", action="store_true", default=None, help=argparse.SUPPRESS)
@@ -206,6 +208,10 @@ def main() -> None:
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    palette = None
+    if args.palette:
+        palette = load_palette(args.palette)
+
     cfg = build_precondition_config(
         args,
         default_teed_weights_path=_default_teed_weights_path(),
@@ -213,6 +219,8 @@ def main() -> None:
         missing_weights_message="precond_mode=teed requires --teed-weights PATH",
         clamp_max_width=getattr(args, "max_width", None),
     )
+    if palette is not None:
+        cfg.palette = palette
     scene = pydiffvg.build_preconditioned_scene(args.image, cfg=cfg, backend=args.backend, device=device)
 
     # Debug outputs for the preconditioning stage

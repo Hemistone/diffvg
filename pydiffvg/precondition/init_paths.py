@@ -313,6 +313,8 @@ def build_preconditioned_scene(
             canvas_w=proc_w,
             canvas_h=proc_h,
             device=device,
+            palette_canvas_w=width,
+            palette_canvas_h=height,
         )
     else:
         edge_mask, skeleton, polylines = _edges_and_polylines(rgb_proc, cfg, device=device)
@@ -323,6 +325,8 @@ def build_preconditioned_scene(
             canvas_w=proc_w,
             canvas_h=proc_h,
             device=device,
+            palette_canvas_w=width,
+            palette_canvas_h=height,
         )
     if scale != 1.0:
         inv = 1.0 / scale

@@ -1,0 +1,5 @@
+name = "single_black_pen"
+
+entries = [
+  { name = "black", width_mm = 0.35, color = "#000000EE" },
+]

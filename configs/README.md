@@ -12,6 +12,7 @@ Key mapping examples:
 - `--teed-detect-res` -> `teed_detect_res`
 - `--min-path-length` -> `min_path_length`
 - `--lineart-threshold-quantile` -> `lineart_threshold_quantile`
+- `--palette` -> `palette`
 
 ## Usage
 
@@ -36,6 +37,12 @@ Flowline preconditioning (painterly):
 python apps/painterly_rendering.py --config configs/precondition/flowline.toml imgs/scream.jpg
 ```
 
+Palette-based styles:
+
+```bash
+python apps/painterly_rendering.py --palette single_black_pen imgs/scream.jpg
+```
+
 Precondition-only debug run:
 
 ```bash
@@ -57,6 +64,12 @@ Flowline preconditioning (precondition-only):
 python apps/precondition_vectorize.py --config configs/precondition/flowline.toml imgs/scream.jpg
 ```
 
+Palette-based styles (precondition-only):
+
+```bash
+python apps/precondition_vectorize.py --palette single_black_pen imgs/scream.jpg
+```
+
 ## Presets
 
 - `precondition/teed.toml`: baseline TEED defaults for shared preconditioning.
@@ -65,6 +78,20 @@ python apps/precondition_vectorize.py --config configs/precondition/flowline.tom
 - `precondition/teed_detail_otsu.toml`: detail preset using Otsu thresholding.
 - `precondition/lineart_quantile.toml`: lineart preset using quantile thresholding.
 - `precondition/flowline.toml`: flowline preset using TEED edge strength.
+- `palette/single_black_pen.toml`: example palette preset.
+
+## Palette format
+
+Palette presets live under `configs/palette/` and define stroke entries:
+
+```toml
+name = "single_black_pen"
+entries = [
+  { name = "black", width_mm = 0.35, color = "#000000EE" },
+]
+```
+
+Each entry must define exactly one of `width_mm` or `width_px` plus a `color`.
 
 ## Notes
 

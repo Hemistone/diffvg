@@ -8,6 +8,10 @@ implementation details.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..palette import Palette
 
 PRECONDITION_TARGET_PATHS_MIN_DEFAULT = 512
 PRECONDITION_TARGET_PATHS_MAX_DEFAULT = 1024
@@ -70,6 +74,7 @@ class PreconditionConfig:
     xdog_stroke_width_scale: float = 0.9
     sample_color: bool = True
     fixed_stroke_rgba: tuple[float, float, float, float] | None = None
+    palette: "Palette | None" = None
     curve_mode: str = "bezier"  # "polyline" or "bezier"
     catmull_rom_tension: float = 0.5
 
