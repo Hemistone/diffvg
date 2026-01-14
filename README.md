@@ -198,16 +198,16 @@ See `scripts/test_optimize_driver.py` for a runnable smoke test.
 Painterly rendering
 
 ```
-painterly_rendering.py [-h] [--num_paths NUM_PATHS]
-                           [--max_width MAX_WIDTH] [--loss LOSS]
-                           [--num_iter NUM_ITER] [--use_blob]
+painterly_rendering.py [-h] [--num-paths NUM_PATHS]
+                           [--max-width MAX_WIDTH] [--loss LOSS]
+                           [--num-iter NUM_ITER] [--use-blob]
                            target
 ```
 
 e.g.,
 
 ```
-python painterly_rendering.py imgs/fallingwater.jpg --num_paths 2048 --max_width 4.0 --loss lpips
+python painterly_rendering.py imgs/fallingwater.jpg --num-paths 2048 --max-width 4.0 --loss lpips
 ```
 
 Use `--loss` to choose the objective (`mse`, `l1`, `lpips`, `msssim`, `dists`, `perceptual-balanced`). `--loss lpips` leverages PIQ’s LPIPS implementation; install with `pip install piq`. Inputs stay in [0,1] and are internally normalized to [-1,1] for PIQ. The legacy flag `--use_lpips_loss` still maps to LPIPS but is kept only for backward compatibility.

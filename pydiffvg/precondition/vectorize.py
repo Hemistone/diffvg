@@ -154,7 +154,6 @@ def polylines_to_paths(
     polylines: list[list[tuple[int, int]]],
     image_rgb: np.ndarray,
     cfg: PreconditionConfig,
-    *,
     canvas_w: int,
     canvas_h: int,
     device: torch.device,
@@ -209,9 +208,9 @@ def polylines_to_paths(
         xs = np.clip(pts[:, 0].astype(int), 0, image_rgb.shape[1] - 1)
         luminance = gray[ys, xs]
         darkness = 1.0 - float(luminance.mean())
-        width = cfg.base_stroke_width + (cfg.max_stroke_width - cfg.base_stroke_width) * (darkness ** cfg.stroke_width_gamma)
+        width = cfg.base_width + (cfg.max_width - cfg.base_width) * (darkness ** cfg.width_gamma)
         if (cfg.mode or "xdog").strip().lower() == "xdog":
-            width *= float(cfg.xdog_stroke_width_scale)
+            width *= float(cfg.xdog_width_scale)
         entry = None
         if palette is not None:
             entry, width, _ = palette.entry_for_width(width, palette_canvas_w, palette_canvas_h)
@@ -229,10 +228,6 @@ def polylines_to_paths(
 
         if entry is not None:
             rgba = np.array(entry.color_rgba, dtype=np.float32)
-            stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
-        elif cfg.fixed_stroke_rgba is not None:
-            rgba = np.array(cfg.fixed_stroke_rgba, dtype=np.float32)
-            rgba = np.clip(rgba, 0.0, 1.0)
             stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
         else:
             if cfg.sample_color:

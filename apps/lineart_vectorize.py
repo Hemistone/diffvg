@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+# Precondition-only debugging should avoid CUDA init for faster, safer runs.
+os.environ["DIFFVG_DEVICE"] = "cpu"
+os.environ["DIFFVG_FORCE_CPU"] = "1"
 
 import numpy as np
 import torch
@@ -24,12 +29,12 @@ def _load_rgb(path: Path) -> np.ndarray:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Line-art vectorization using preconditioning (no painterly noise).")
     parser.add_argument("image", type=Path, help="Input line-art raster")
-    parser.add_argument("--backend", default="splat", choices=["baseline", "splat"], help="Render backend")
-    parser.add_argument("--num-colors", type=int, default=1, help="Number of inks/colors to extract")
-    parser.add_argument("--merge-distance", type=float, default=3.0, help="Endpoint merge distance in pixels")
-    parser.add_argument("--merge-angle", type=float, default=18.0, help="Max angle (deg) between tangents for merging")
-    parser.add_argument("--simplify-eps", type=float, default=1.1, help="RDP epsilon for path simplification")
-    parser.add_argument("--smooth-window", type=int, default=5, help="Moving-average window for smoothing")
+    parser.add_argument("--backend", default="baseline", choices=["baseline", "splat"], help="Render backend")
+    parser.add_argument("--precond-lineart-mask-count", dest="precond_lineart_mask_count", type=int, default=1, help="Number of inks/colors to extract")
+    parser.add_argument("--precond-merge-distance", dest="precond_merge_distance", type=float, default=3.0, help="Endpoint merge distance in pixels")
+    parser.add_argument("--precond-merge-angle-deg", dest="precond_merge_angle_deg", type=float, default=18.0, help="Max angle (deg) between tangents for merging")
+    parser.add_argument("--precond-simplify-eps", dest="precond_simplify_eps", type=float, default=1.1, help="RDP epsilon for path simplification")
+    parser.add_argument("--precond-smooth-window", dest="precond_smooth_window", type=int, default=5, help="Moving-average window for smoothing")
     parser.add_argument("--refine-iters", type=int, default=0, help="Optional short diffvg refinement steps")
     parser.add_argument("--out-dir", type=Path, default=Path("results/lineart_vectorize"), help="Output directory")
     parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
@@ -43,11 +48,11 @@ def main() -> None:
     rgb = _load_rgb(args.image)
     cfg = pydiffvg.PreconditionConfig(
         mode="lineart",
-        num_colors=args.num_colors,
-        merge_distance=args.merge_distance,
-        merge_angle_deg=args.merge_angle,
-        simplify_epsilon=args.simplify_eps,
-        smooth_window=args.smooth_window,
+        lineart_mask_count=args.precond_lineart_mask_count,
+        merge_distance=args.precond_merge_distance,
+        merge_angle_deg=args.precond_merge_angle_deg,
+        simplify_epsilon=args.precond_simplify_eps,
+        smooth_window=args.precond_smooth_window,
         curve_mode="bezier",
     )
     if args.palette:

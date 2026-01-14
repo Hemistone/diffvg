@@ -9,9 +9,9 @@ The same presets can be used with both `apps/painterly_rendering.py` and
 Key mapping examples:
 
 - `--precond-mode` -> `precond_mode`
-- `--teed-detect-res` -> `teed_detect_res`
-- `--min-path-length` -> `min_path_length`
-- `--lineart-threshold-quantile` -> `lineart_threshold_quantile`
+- `--precond-teed-detect-res` -> `precond_teed_detect_res`
+- `--precond-min-path-length` -> `precond_min_path_length`
+- `--precond-lineart-threshold-quantile` -> `precond_lineart_threshold_quantile`
 - `--palette` -> `palette`
 
 ## Usage
@@ -99,8 +99,8 @@ Each entry must define exactly one of `width_mm` or `width_px` plus a `color`.
 - Unknown keys in a TOML file will raise an error to catch typos.
 - `store_true` flags set to `true` in a preset cannot be disabled from CLI
   (there is no `--no-...` flag yet). Use a different preset if you need them off.
-- `max_paths` caps the number of preconditioned paths; painterly will fall back
-  to `num_paths` when `max_paths` is not set.
+- `precond_max_paths` caps the number of preconditioned paths; painterly will fall back
+  to `num_paths` when `precond_max_paths` is not set.
 - Empirical note: on `papers/karina2.jpg`, `precondition/teed_detail_quantile.toml`
   produced the most pleasing preconditioning results.
 
@@ -109,15 +109,15 @@ Each entry must define exactly one of `width_mm` or `width_px` plus a `color`.
 Preconditioning now defaults to **A4 pen scaling** so strokes stay physically
 consistent across image sizes.
 
-- `stroke_width_mode = "a4_pen"` (default): uses A4 fit and pen widths in mm
-  (`pen_width_min_mm=0.35`, `pen_width_max_mm=0.8`)
-- `stroke_width_mode = "absolute"`: uses pixel widths from
-  `base_stroke_width` / `max_stroke_width`
+- `precond_width_mode = "a4_pen"` (default): uses A4 fit and pen widths in mm
+  (`precond_width_min_mm=0.35`, `precond_width_max_mm=0.8`)
+- `precond_width_mode = "absolute"`: uses pixel widths from
+  `precond_base_width` / `precond_max_width`
 
 You can override the defaults in a preset:
 
 ```toml
-stroke_width_mode = "a4_pen"
-pen_width_min_mm = 0.35
-pen_width_max_mm = 0.8
+precond_width_mode = "a4_pen"
+precond_width_min_mm = 0.35
+precond_width_max_mm = 0.8
 ```

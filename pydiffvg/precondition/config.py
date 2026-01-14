@@ -65,15 +65,14 @@ class PreconditionConfig:
 
     # Stroke shaping
     force_open_paths: bool = False
-    stroke_width_mode: str = "a4_pen"  # "absolute" or "a4_pen"
-    stroke_width_pen_min_mm: float = 0.35
-    stroke_width_pen_max_mm: float = 0.8
-    base_stroke_width: float = 1.6
-    max_stroke_width: float = 3.2
-    stroke_width_gamma: float = 1.5
-    xdog_stroke_width_scale: float = 0.9
+    width_mode: str = "a4_pen"  # "absolute" or "a4_pen"
+    width_min_mm: float = 0.35
+    width_max_mm: float = 0.8
+    base_width: float = 1.6
+    max_width: float = 3.2
+    width_gamma: float = 1.5
+    xdog_width_scale: float = 0.9
     sample_color: bool = True
-    fixed_stroke_rgba: tuple[float, float, float, float] | None = None
     palette: "Palette | None" = None
     curve_mode: str = "bezier"  # "polyline" or "bezier"
     catmull_rom_tension: float = 0.5
@@ -83,12 +82,12 @@ class PreconditionConfig:
 
     # Preconditioning mode
     mode: str = "xdog"  # "xdog", "teed", "lineart", or "flowline"
-    num_colors: int = 1
-    palette_mode: str = "auto"  # "auto" or "fixed"
-    palette_colors: list[tuple[float, float, float]] | None = None
+    lineart_mask_count: int = 1
+    lineart_mask_mode: str = "auto"  # "auto" or "fixed"
+    lineart_mask_colors: list[tuple[float, float, float]] | None = None
     merge_distance: float = 3.0
     merge_angle_deg: float = 18.0
-    clamp_stroke_width_per_color: bool = True
+    lineart_mask_clamp_width_per_color: bool = True
     lineart_threshold_mode: str = "quantile"  # "quantile", "otsu", or "fixed"
     lineart_threshold_quantile: float = 0.25
     lineart_threshold: float = 0.5

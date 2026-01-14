@@ -19,7 +19,7 @@ Example:
     python scripts/tune_splat_launch.py --out tuning.json
 
 Use `--` to pass extra arguments straight to painterly_rendering.py, e.g.
-`-- --max_width 3.0 --blob_mode`.
+`-- --max-width 3.0 --use-blob`.
 
 Because each run launches the full painterly optimization, expect the sweep
 to take significant time. Run on the target GPU you are tuning for.
@@ -176,9 +176,9 @@ def _run_painterly(
         sys.executable,
         "apps/painterly_rendering.py",
         workload.target,
-        "--num_paths",
+        "--num-paths",
         str(workload.num_paths),
-        "--num_iter",
+        "--num-iter",
         str(workload.num_iter),
         "--loss",
         workload.loss,

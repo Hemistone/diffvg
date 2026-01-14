@@ -1,7 +1,7 @@
 """Preconditioning pipeline for already-sketchy line-art images.
 
 This skips edge detectors and instead:
-1) Quantizes to a small palette (auto or fixed).
+1) Quantizes to a small mask palette (auto or fixed).
 2) Binarizes per color mask, denoises.
 3) Skeletonizes and traces polylines.
 4) Merges fragments based on proximity and tangent alignment.
@@ -64,11 +64,11 @@ def _simple_kmeans(flat: np.ndarray, k: int, iters: int = 8) -> Tuple[np.ndarray
     return centers, labels
 
 
-def _quantize_palette(image: np.ndarray, cfg: PreconditionConfig) -> Tuple[np.ndarray, np.ndarray]:
-    """Return (palette, labels) where palette is Kx3 in [0,1], labels is HxW ints."""
+def _quantize_mask_palette(image: np.ndarray, cfg: PreconditionConfig) -> Tuple[np.ndarray, np.ndarray]:
+    """Return (mask_palette, labels) where mask_palette is Kx3 in [0,1], labels is HxW ints."""
     h, w, _ = image.shape
     flat = image.reshape(-1, 3)
-    if cfg.num_colors <= 1:
+    if cfg.lineart_mask_count <= 1:
         # single-color: keep only ink (darker) pixels, ignore background
         gray = image.mean(axis=2)
         mode = (cfg.lineart_threshold_mode or "quantile").strip().lower()
@@ -88,17 +88,17 @@ def _quantize_palette(image: np.ndarray, cfg: PreconditionConfig) -> Tuple[np.nd
         ink_mask = gray <= thresh
         labels = np.ones((h, w), dtype=np.int32)
         labels[ink_mask] = 0
-        palette = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        return palette, labels
+        mask_palette = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+        return mask_palette, labels
 
-    if cfg.palette_mode == "fixed" and cfg.palette_colors:
-        palette = np.array(cfg.palette_colors, dtype=np.float32)
-        dists = ((flat[:, None, :] - palette[None, :, :]) ** 2).sum(axis=2)
+    if cfg.lineart_mask_mode == "fixed" and cfg.lineart_mask_colors:
+        mask_palette = np.array(cfg.lineart_mask_colors, dtype=np.float32)
+        dists = ((flat[:, None, :] - mask_palette[None, :, :]) ** 2).sum(axis=2)
         labels = np.argmin(dists, axis=1)
     else:
-        k = max(1, cfg.num_colors)
-        palette, labels = _simple_kmeans(flat, k)
-    return palette.astype(np.float32), labels.reshape(h, w)
+        k = max(1, cfg.lineart_mask_count)
+        mask_palette, labels = _simple_kmeans(flat, k)
+    return mask_palette.astype(np.float32), labels.reshape(h, w)
 
 
 def _score_polyline(poly: List[Tuple[int, int]], gray: np.ndarray, mode: str) -> float:
@@ -137,7 +137,7 @@ def _path_from_polyline(
     else:
         num_control_points = torch.zeros(pts.shape[0] - 1, dtype=torch.int32, device=device)
     points = torch.tensor(pts, dtype=torch.float32, device=device)
-    stroke_width = torch.tensor(cfg.base_stroke_width, dtype=torch.float32, device=device)
+    stroke_width = torch.tensor(cfg.base_width, dtype=torch.float32, device=device)
     return pydiffvg.Path(
         num_control_points=num_control_points,
         points=points,
@@ -155,8 +155,8 @@ def build_lineart_scene(
     device: torch.device,
     max_paths: int | None = None,
 ) -> Tuple[List[pydiffvg.Path], List[pydiffvg.ShapeGroup], np.ndarray, np.ndarray]:
-    palette = cfg.palette
-    palette, labels = _quantize_palette(image_rgb, cfg)
+    stroke_palette = cfg.palette
+    mask_palette, labels = _quantize_mask_palette(image_rgb, cfg)
     all_shapes: List[pydiffvg.Path] = []
     all_groups: List[pydiffvg.ShapeGroup] = []
     edge_union = np.zeros(labels.shape, dtype=bool)
@@ -165,14 +165,16 @@ def build_lineart_scene(
     scored: List[Tuple[float, List[Tuple[int, int]], int, np.ndarray]] = []
     score_mode = (cfg.sort_by or "darkness_length").strip().lower()
 
-    for color_idx, color in enumerate(palette):
+    for color_idx, color in enumerate(mask_palette):
         mask = labels == color_idx
         if cfg.min_component_area > 0:
-            mask = morphology.remove_small_objects(mask, cfg.min_component_area)
+            # remove_small_objects deprecated min_size -> max_size (inclusive); keep legacy behavior (strictly smaller)
+            max_size = max(0, int(cfg.min_component_area) - 1)
+            mask = morphology.remove_small_objects(mask, max_size=max_size)
         if cfg.morph_open_radius > 0:
-            mask = morphology.binary_opening(mask, morphology.disk(cfg.morph_open_radius))
+            mask = morphology.opening(mask, morphology.disk(cfg.morph_open_radius))
         if cfg.morph_close_radius > 0:
-            mask = morphology.binary_closing(mask, morphology.disk(cfg.morph_close_radius))
+            mask = morphology.closing(mask, morphology.disk(cfg.morph_close_radius))
         edge_union |= mask
         skel = skeletonize_edges(mask)
         skel_union |= skel
@@ -197,18 +199,14 @@ def build_lineart_scene(
         shape_index = len(all_shapes)
         path.id = f"lineart_path_{shape_index}"
         entry = None
-        if palette is not None:
-            entry, entry_width, _ = palette.entry_for_index(color_idx, canvas_w, canvas_h)
+        if stroke_palette is not None:
+            entry, entry_width, _ = stroke_palette.entry_for_index(color_idx, canvas_w, canvas_h)
             path.stroke_width = torch.tensor(entry_width, dtype=torch.float32, device=device)
         all_shapes.append(path)
         if entry is not None:
             rgba = np.array(entry.color_rgba, dtype=np.float32)
             stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
-        elif cfg.fixed_stroke_rgba is not None:
-            rgba = np.array(cfg.fixed_stroke_rgba, dtype=np.float32)
-            rgba = np.clip(rgba, 0.0, 1.0)
-            stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
-        elif cfg.num_colors <= 1:
+        elif cfg.lineart_mask_count <= 1:
             rgba = _DEFAULT_INK_RGBA
             stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], dtype=torch.float32, device=device)
         else:

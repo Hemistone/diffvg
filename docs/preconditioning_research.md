@@ -346,9 +346,9 @@ class PreconditionConfig:
     path_sort: str = "darkest_first"  # or "longest_first"
 
     # stroke & color
-    base_stroke_width: float = 1.5
-    max_stroke_width: float = 3.0
-    stroke_width_gamma: float = 1.5  # dark 영역에서 더 굵게
+    base_width: float = 1.5
+    max_width: float = 3.0
+    width_gamma: float = 1.5  # dark 영역에서 더 굵게
     sample_color: bool = True
 ```
 
@@ -570,7 +570,7 @@ def polylines_to_paths(polylines: list[list[tuple[int,int]]],
         xs = np.clip(pts[:, 0].astype(int), 0, W-1)
         lum_mean = gray[ys, xs].mean()
         darkness = 1.0 - lum_mean
-        width = cfg.base_stroke_width + (cfg.max_stroke_width - cfg.base_stroke_width) * (darkness ** cfg.stroke_width_gamma)
+        width = cfg.base_width + (cfg.max_width - cfg.base_width) * (darkness ** cfg.width_gamma)
         width_tensor = torch.tensor(width, device=device)
 
         path = pydiffvg.Path(

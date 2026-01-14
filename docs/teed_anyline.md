@@ -101,7 +101,7 @@ skeleton 기반 vectorize 과정에서 loop가 많아지면 폐곡선 path가 �
 * “splat 사용 시” preconditioning 단계에서 path를 **강제로 open curve로 만들기**(loop cut 또는 `is_closed=False` 강제)
 * loop는 fill로만 쓰고 stroke는 open curve만 쓰도록 정책 분리(추가 구현 필요)
 
-현재는 `force_open_paths` 옵션으로 closed stroke를 강제로 열도록 지원하며, splat backend에서는 자동으로 활성화된다.
+현재는 `precond_force_open_paths` 옵션으로 closed stroke를 강제로 열도록 지원하며, splat backend에서는 자동으로 활성화된다.
 
 ---
 
@@ -145,7 +145,7 @@ Anyline을 “바로 통째로” 붙이기보다, 아래 순서로 가는 편�
   * `hysteresis`: high/low threshold를 사용해 연결된 약한 edge를 보존
   * `quantile`: edge strength 상위 q 비율만 유지
   * `otsu`: Otsu 자동 임계값
-  * CLI 예시: `--teed-threshold-mode hysteresis --teed-hysteresis-low-ratio 0.5`
+  * CLI 예시: `--precond-teed-threshold-mode hysteresis --precond-teed-hysteresis-low-ratio 0.5`
 * thresholding 전략:
   * 고정 threshold vs quantile/otsu 기반 threshold
   * morphology 파라미터(min_component_area/open/close)가 skeleton 품질에 미치는 영향
@@ -155,23 +155,23 @@ Anyline을 “바로 통째로” 붙이기보다, 아래 순서로 가는 편�
 ## 7. 다음 작업 후보 (현재 상태 기록)
 
 * Anyline 스타일 보강(TEED + lineart intensity 합성): **적용**
-  * `teed_lineart` + `teed_lineart_blur_sigma/strength/combine`로 blur+screen/max/add 보강 지원
+  * `precond_teed_lineart` + `precond_teed_lineart_blur_sigma/strength/combine`로 blur+screen/max/add 보강 지원
 * Threshold 고급화 확장: **적용**
-  * `teed_threshold_mode=quantile|otsu` + `teed_threshold_quantile` 추가
+  * `precond_teed_threshold_mode=quantile|otsu` + `precond_teed_threshold_quantile` 추가
   * quantile preset: `configs/precondition/teed_detail_quantile.toml`
   * otsu preset: `configs/precondition/teed_detail_otsu.toml`
 * Skeleton/Polyline 품질 개선: **부분 적용**
-  * `merge_polylines` + `merge_distance/merge_angle_deg` 옵션으로 단편 merge
-  * `force_open_paths`로 splat 폐곡선 회피
+  * `precond_merge_polylines` + `precond_merge_distance/precond_merge_angle_deg` 옵션으로 단편 merge
+  * `precond_force_open_paths`로 splat 폐곡선 회피
   * dynamic merge/split은 후순위
 * path 수 자동 보정: **적용**
-  * `precondition_target_paths_min/max` 범위를 기준으로 내부 해상도를 자동 조정(업/다운스케일)하여 path 수를 맞춤
+  * `precond_target_paths_min/max` 범위를 기준으로 내부 해상도를 자동 조정(업/다운스케일)하여 path 수를 맞춤
   * 기본 범위는 `PRECONDITION_TARGET_PATHS_MIN_DEFAULT`/`PRECONDITION_TARGET_PATHS_MAX_DEFAULT`를 따르며 필요 시 CLI에서 min/max만 조정
   * preconditioning은 항상 자동 보정 모드로 동작하며 min-side 수동 옵션은 제거됨
 * TEED detect_res/threshold/safe_steps 스윕: **미적용**
   * 이미지 유형(건축/인물/자연)별 추천 범위 확보
 * 전역 스타일 옵션 확장: **부분 적용**
-  * fixed-stroke-width는 추가됨
+  * palette 기반 width/color 고정 지원
   * 색 샘플링/모노톤 플래그 강화는 미적용
 
 ---

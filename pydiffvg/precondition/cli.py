@@ -15,19 +15,6 @@ def resolve_teed_weights_path(weights_path: str | None, default_weights_path: st
     return candidate
 
 
-def apply_fixed_stroke_config(
-    cfg: PreconditionConfig,
-    *,
-    enabled: bool | None,
-    alpha: float | None = None,
-) -> None:
-    if not enabled:
-        return
-    a = 0.9 if alpha is None else float(alpha)
-    a = max(0.0, min(1.0, a))
-    cfg.fixed_stroke_rgba = (0.0, 0.0, 0.0, a)
-
-
 def apply_precondition_cleanup(
     cfg: PreconditionConfig,
     *,
@@ -83,38 +70,38 @@ def apply_polyline_settings(
         cfg.force_open_paths = bool(force_open_paths)
 
 
-def apply_stroke_widths(
+def apply_widths(
     cfg: PreconditionConfig,
     *,
-    base_stroke_width: float | None = None,
-    max_stroke_width: float | None = None,
+    base_width: float | None = None,
+    max_width: float | None = None,
     clamp_max_width: float | None = None,
 ) -> None:
-    if base_stroke_width is None and max_stroke_width is None and clamp_max_width is None:
+    if base_width is None and max_width is None and clamp_max_width is None:
         return
-    if base_stroke_width is not None or max_stroke_width is not None:
-        cfg.stroke_width_mode = "absolute"
-    base = cfg.base_stroke_width if base_stroke_width is None else float(base_stroke_width)
-    max_w = cfg.max_stroke_width if max_stroke_width is None else float(max_stroke_width)
+    if base_width is not None or max_width is not None:
+        cfg.width_mode = "absolute"
+    base = cfg.base_width if base_width is None else float(base_width)
+    max_w = cfg.max_width if max_width is None else float(max_width)
     if clamp_max_width is not None:
         max_w = min(max_w, float(clamp_max_width))
-    cfg.max_stroke_width = max_w
-    cfg.base_stroke_width = min(base, max_w)
+    cfg.max_width = max_w
+    cfg.base_width = min(base, max_w)
 
 
-def apply_pen_widths(
+def apply_width_settings(
     cfg: PreconditionConfig,
     *,
-    stroke_width_mode: str | None = None,
-    pen_min_mm: float | None = None,
-    pen_max_mm: float | None = None,
+    width_mode: str | None = None,
+    width_min_mm: float | None = None,
+    width_max_mm: float | None = None,
 ) -> None:
-    if stroke_width_mode is not None:
-        cfg.stroke_width_mode = str(stroke_width_mode)
-    if pen_min_mm is not None:
-        cfg.stroke_width_pen_min_mm = float(pen_min_mm)
-    if pen_max_mm is not None:
-        cfg.stroke_width_pen_max_mm = float(pen_max_mm)
+    if width_mode is not None:
+        cfg.width_mode = str(width_mode)
+    if width_min_mm is not None:
+        cfg.width_min_mm = float(width_min_mm)
+    if width_max_mm is not None:
+        cfg.width_max_mm = float(width_max_mm)
 
 
 def apply_teed_settings(
@@ -262,67 +249,68 @@ def build_precondition_config(
     clamp_max_width: float | None = None,
 ) -> PreconditionConfig:
     cfg = PreconditionConfig()
-    apply_pen_widths(
+    apply_width_settings(
         cfg,
-        stroke_width_mode=getattr(args, "stroke_width_mode", None),
-        pen_min_mm=getattr(args, "pen_width_min_mm", None),
-        pen_max_mm=getattr(args, "pen_width_max_mm", None),
-    )
-    apply_fixed_stroke_config(
-        cfg,
-        enabled=getattr(args, "fixed_stroke", False),
-        alpha=getattr(args, "fixed_stroke_alpha", None),
+        width_mode=getattr(args, "precond_width_mode", None),
+        width_min_mm=getattr(args, "precond_width_min_mm", None),
+        width_max_mm=getattr(args, "precond_width_max_mm", None),
     )
     apply_lineart_settings(
         cfg,
-        threshold_mode=getattr(args, "lineart_threshold_mode", None),
-        threshold_quantile=getattr(args, "lineart_threshold_quantile", None),
-        threshold=getattr(args, "lineart_threshold", None),
+        threshold_mode=getattr(args, "precond_lineart_threshold_mode", None),
+        threshold_quantile=getattr(args, "precond_lineart_threshold_quantile", None),
+        threshold=getattr(args, "precond_lineart_threshold", None),
+    )
+    apply_lineart_mask_settings(
+        cfg,
+        mask_count=getattr(args, "precond_lineart_mask_count", None),
+        mask_mode=getattr(args, "precond_lineart_mask_mode", None),
+        mask_colors=getattr(args, "precond_lineart_mask_colors", None),
     )
     apply_flowline_settings(
         cfg,
-        edge_backend=getattr(args, "flow_edge_backend", None),
-        seed_mode=getattr(args, "flow_seed_mode", None),
-        seed_quantile=getattr(args, "flow_seed_quantile", None),
-        seed_threshold=getattr(args, "flow_seed_threshold", None),
-        min_strength=getattr(args, "flow_min_strength", None),
-        step_px=getattr(args, "flow_step_px", None),
-        max_len=getattr(args, "flow_max_len", None),
-        min_len=getattr(args, "flow_min_len", None),
-        min_seed_dist=getattr(args, "flow_min_seed_dist", None),
-        curvature_deg=getattr(args, "flow_curvature_deg", None),
-        field_sigma=getattr(args, "flow_field_sigma", None),
-        field_iters=getattr(args, "flow_field_iters", None),
-        coverage_decay=getattr(args, "flow_coverage_decay", None),
-        coverage_radius=getattr(args, "flow_coverage_radius", None),
+        edge_backend=getattr(args, "precond_flow_edge_backend", None),
+        seed_mode=getattr(args, "precond_flow_seed_mode", None),
+        seed_quantile=getattr(args, "precond_flow_seed_quantile", None),
+        seed_threshold=getattr(args, "precond_flow_seed_threshold", None),
+        min_strength=getattr(args, "precond_flow_min_strength", None),
+        step_px=getattr(args, "precond_flow_step_px", None),
+        max_len=getattr(args, "precond_flow_max_len", None),
+        min_len=getattr(args, "precond_flow_min_len", None),
+        min_seed_dist=getattr(args, "precond_flow_min_seed_dist", None),
+        curvature_deg=getattr(args, "precond_flow_curvature_deg", None),
+        field_sigma=getattr(args, "precond_flow_field_sigma", None),
+        field_iters=getattr(args, "precond_flow_field_iters", None),
+        coverage_decay=getattr(args, "precond_flow_coverage_decay", None),
+        coverage_radius=getattr(args, "precond_flow_coverage_radius", None),
     )
-    arg_max_paths = getattr(args, "max_paths", None)
+    arg_max_paths = getattr(args, "precond_max_paths", None)
     apply_precondition_cleanup(
         cfg,
         max_paths=arg_max_paths,
-        min_path_length=getattr(args, "min_path_length", None),
-        max_path_length=getattr(args, "max_path_length", None),
-        min_component_area=getattr(args, "min_component_area", None),
-        morph_open_radius=getattr(args, "morph_open_radius", None),
-        morph_close_radius=getattr(args, "morph_close_radius", None),
+        min_path_length=getattr(args, "precond_min_path_length", None),
+        max_path_length=getattr(args, "precond_max_path_length", None),
+        min_component_area=getattr(args, "precond_min_component_area", None),
+        morph_open_radius=getattr(args, "precond_morph_open_radius", None),
+        morph_close_radius=getattr(args, "precond_morph_close_radius", None),
     )
     apply_precondition_scaling(
         cfg,
         target_paths_min=getattr(args, "precond_target_paths_min", None),
         target_paths_max=getattr(args, "precond_target_paths_max", None),
     )
-    apply_stroke_widths(
+    apply_widths(
         cfg,
-        base_stroke_width=getattr(args, "base_stroke_width", None),
-        max_stroke_width=getattr(args, "max_stroke_width", None),
+        base_width=getattr(args, "precond_base_width", None),
+        max_width=getattr(args, "precond_max_width", None),
         clamp_max_width=clamp_max_width,
     )
     apply_polyline_settings(
         cfg,
-        merge_polylines=getattr(args, "merge_polylines", None),
-        merge_distance=getattr(args, "merge_distance", None),
-        merge_angle_deg=getattr(args, "merge_angle_deg", None),
-        force_open_paths=getattr(args, "force_open_paths", None),
+        merge_polylines=getattr(args, "precond_merge_polylines", None),
+        merge_distance=getattr(args, "precond_merge_distance", None),
+        merge_angle_deg=getattr(args, "precond_merge_angle_deg", None),
+        force_open_paths=getattr(args, "precond_force_open_paths", None),
     )
     cfg.mode = (getattr(args, "precond_mode", "xdog") or "xdog").strip().lower()
     if cfg.mode not in ("xdog", "teed", "lineart", "flowline"):
@@ -335,18 +323,18 @@ def build_precondition_config(
     if needs_teed:
         apply_teed_settings(
             cfg,
-            weights_path=getattr(args, "teed_weights", None),
+            weights_path=getattr(args, "precond_teed_weights", None),
             default_weights_path=default_teed_weights_path,
-            detect_res=getattr(args, "teed_detect_res", None),
-            threshold=getattr(args, "teed_threshold", None),
-            safe_steps=getattr(args, "teed_safe_steps", None),
-            threshold_mode=getattr(args, "teed_threshold_mode", None),
-            hysteresis_low_ratio=getattr(args, "teed_hysteresis_low_ratio", None),
-            threshold_quantile=getattr(args, "teed_threshold_quantile", None),
-            lineart_enabled=getattr(args, "teed_lineart", None),
-            lineart_blur_sigma=getattr(args, "teed_lineart_blur_sigma", None),
-            lineart_strength=getattr(args, "teed_lineart_strength", None),
-            lineart_combine=getattr(args, "teed_lineart_combine", None),
+            detect_res=getattr(args, "precond_teed_detect_res", None),
+            threshold=getattr(args, "precond_teed_threshold", None),
+            safe_steps=getattr(args, "precond_teed_safe_steps", None),
+            threshold_mode=getattr(args, "precond_teed_threshold_mode", None),
+            hysteresis_low_ratio=getattr(args, "precond_teed_hysteresis_low_ratio", None),
+            threshold_quantile=getattr(args, "precond_teed_threshold_quantile", None),
+            lineart_enabled=getattr(args, "precond_teed_lineart", None),
+            lineart_blur_sigma=getattr(args, "precond_teed_lineart_blur_sigma", None),
+            lineart_strength=getattr(args, "precond_teed_lineart_strength", None),
+            lineart_combine=getattr(args, "precond_teed_lineart_combine", None),
             require_weights=require_teed_weights,
             missing_weights_message=missing_weights_message,
         )
@@ -370,16 +358,31 @@ def apply_lineart_settings(
         cfg.lineart_threshold = float(threshold)
 
 
+def apply_lineart_mask_settings(
+    cfg: PreconditionConfig,
+    *,
+    mask_count: int | None = None,
+    mask_mode: str | None = None,
+    mask_colors: list[tuple[float, float, float]] | None = None,
+) -> None:
+    if mask_count is not None:
+        cfg.lineart_mask_count = int(mask_count)
+    if mask_mode is not None:
+        cfg.lineart_mask_mode = str(mask_mode)
+    if mask_colors is not None:
+        cfg.lineart_mask_colors = mask_colors
+
+
 __all__ = [
     "build_precondition_config",
-    "apply_fixed_stroke_config",
     "apply_precondition_scaling",
     "apply_polyline_settings",
-    "apply_pen_widths",
+    "apply_width_settings",
     "apply_precondition_cleanup",
-    "apply_stroke_widths",
+    "apply_widths",
     "apply_teed_settings",
     "apply_flowline_settings",
     "apply_lineart_settings",
+    "apply_lineart_mask_settings",
     "resolve_teed_weights_path",
 ]
