@@ -44,6 +44,94 @@ def _load_config_defaults(config_path: str, parser: argparse.ArgumentParser) -> 
     return data
 
 
+def _filter_config_items(
+    config_items: dict,
+    *,
+    precondition: bool,
+    precond_mode: str,
+    teed_mode: bool,
+) -> dict:
+    common_precond = {
+        "precond_mode",
+        "precond_width_mode",
+        "precond_width_min_mm",
+        "precond_width_max_mm",
+        "precond_max_paths",
+        "precond_min_path_length",
+        "precond_max_path_length",
+        "precond_min_component_area",
+        "precond_morph_open_radius",
+        "precond_morph_close_radius",
+        "precond_base_width",
+        "precond_max_width",
+        "precond_merge_polylines",
+        "precond_merge_distance",
+        "precond_merge_angle_deg",
+        "precond_force_open_paths",
+        "precond_target_paths_min",
+        "precond_target_paths_max",
+    }
+    lineart_precond = {
+        "precond_lineart_threshold_mode",
+        "precond_lineart_threshold_quantile",
+        "precond_lineart_threshold",
+        "precond_lineart_mask_count",
+        "precond_lineart_mask_mode",
+        "precond_lineart_mask_colors",
+    }
+    teed_precond = {
+        "precond_teed_weights",
+        "precond_teed_detect_res",
+        "precond_teed_threshold",
+        "precond_teed_safe_steps",
+        "precond_teed_threshold_mode",
+        "precond_teed_hysteresis_low_ratio",
+        "precond_teed_threshold_quantile",
+        "precond_teed_lineart",
+        "precond_teed_lineart_blur_sigma",
+        "precond_teed_lineart_strength",
+        "precond_teed_lineart_combine",
+    }
+    flow_precond = {
+        "precond_flow_edge_backend",
+        "precond_flow_seed_mode",
+        "precond_flow_seed_quantile",
+        "precond_flow_seed_threshold",
+        "precond_flow_min_strength",
+        "precond_flow_step_px",
+        "precond_flow_max_len",
+        "precond_flow_min_len",
+        "precond_flow_min_seed_dist",
+        "precond_flow_curvature_deg",
+        "precond_flow_field_sigma",
+        "precond_flow_field_iters",
+        "precond_flow_coverage_decay",
+        "precond_flow_coverage_radius",
+    }
+
+    allowed_precond: set[str] = set()
+    if precondition:
+        allowed_precond.update(common_precond)
+        if precond_mode == "lineart":
+            allowed_precond.update(lineart_precond)
+        if precond_mode == "flowline":
+            allowed_precond.update(flow_precond)
+        if teed_mode:
+            allowed_precond.update(teed_precond)
+
+    filtered: dict = {}
+    for key, value in config_items.items():
+        if value is None:
+            continue
+        if key.startswith("precond_"):
+            if not precondition or key not in allowed_precond:
+                continue
+        if key == "palette" and not value:
+            continue
+        filtered[key] = value
+    return filtered
+
+
 def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
     """Composite RGBA to RGB over white.
 
@@ -67,7 +155,7 @@ gamma = 1.0
 def main(args):
     backend = getattr(args, "backend", "baseline").strip().lower()
     pydiffvg.set_backend(backend)
-    use_gpu = torch.cuda.is_available()
+    use_gpu = pydiffvg.get_device().type == "cuda"
     pydiffvg.set_use_gpu(use_gpu)
 
     precondition = bool(getattr(args, "precondition", False))
@@ -208,6 +296,7 @@ def main(args):
         "run_dir": run.results_dir,
     }
     teed_mode = False
+    flow_backend = None
     if precondition and precond_mode == "teed":
         teed_mode = True
     elif precondition and precond_mode == "flowline":
@@ -251,7 +340,7 @@ def main(args):
         config_items["precond_lineart_mask_mode"] = getattr(args, "precond_lineart_mask_mode", None)
         config_items["precond_lineart_mask_colors"] = getattr(args, "precond_lineart_mask_colors", None)
         if precond_mode == "flowline":
-            config_items["precond_flow_edge_backend"] = getattr(args, "precond_flow_edge_backend", None)
+            config_items["precond_flow_edge_backend"] = flow_backend
             config_items["precond_flow_seed_mode"] = getattr(args, "precond_flow_seed_mode", None)
             config_items["precond_flow_seed_quantile"] = getattr(args, "precond_flow_seed_quantile", None)
             config_items["precond_flow_seed_threshold"] = getattr(args, "precond_flow_seed_threshold", None)
@@ -275,7 +364,12 @@ def main(args):
 
     log_run_configuration(
         "painterly_rendering",
-        config_items,
+        _filter_config_items(
+            config_items,
+            precondition=precondition,
+            precond_mode=precond_mode,
+            teed_mode=teed_mode,
+        ),
     )
 
     random.seed(1234)
