@@ -41,26 +41,43 @@ def _to_gray(image_rgb: np.ndarray) -> np.ndarray:
 
 
 def _compute_flow_field(gray: np.ndarray, cfg: PreconditionConfig) -> tuple[np.ndarray, np.ndarray]:
+    """Compute an Edge Tangent Flow (ETF) field.
+
+    Uses double-angle smoothing to average orientations without branchy loops.
+    """
     gx = filters.sobel_h(gray)
     gy = filters.sobel_v(gray)
-    jxx = gx * gx
-    jxy = gx * gy
-    jyy = gy * gy
+    mag = np.hypot(gx, gy).astype(np.float32)
+
+    # Initial tangent vectors are perpendicular to the gradient.
+    tx = (-gy).astype(np.float32)
+    ty = gx.astype(np.float32)
+    norm = np.hypot(tx, ty)
+    norm = np.where(norm > 1e-6, norm, 1.0)
+    tx /= norm
+    ty /= norm
 
     sigma = max(0.0, float(cfg.flow_field_sigma))
-    iters = max(1, int(cfg.flow_field_iters))
-    if sigma > 0.0:
-        for _ in range(iters):
-            jxx = filters.gaussian(jxx, sigma=sigma, mode="nearest")
-            jxy = filters.gaussian(jxy, sigma=sigma, mode="nearest")
-            jyy = filters.gaussian(jyy, sigma=sigma, mode="nearest")
+    iters = int(cfg.flow_field_iters)
+    if sigma <= 0.0 or iters <= 0:
+        return tx, ty
 
-    theta = 0.5 * np.arctan2(2.0 * jxy, jxx - jyy)
-    tx = -np.sin(theta)
-    ty = np.cos(theta)
-    mag = np.sqrt(tx * tx + ty * ty) + 1e-6
-    tx /= mag
-    ty /= mag
+    theta = np.arctan2(ty, tx).astype(np.float32)
+    weight = mag.astype(np.float32)
+    for _ in range(iters):
+        u = np.cos(2.0 * theta) * weight
+        v = np.sin(2.0 * theta) * weight
+        w = weight
+        u = filters.gaussian(u, sigma=sigma, mode="reflect", preserve_range=True).astype(np.float32)
+        v = filters.gaussian(v, sigma=sigma, mode="reflect", preserve_range=True).astype(np.float32)
+        w = filters.gaussian(w, sigma=sigma, mode="reflect", preserve_range=True).astype(np.float32)
+        denom = np.where(w > 1e-6, w, 1.0)
+        u = u / denom
+        v = v / denom
+        theta = 0.5 * np.arctan2(v, u)
+
+    tx = np.cos(theta).astype(np.float32)
+    ty = np.sin(theta).astype(np.float32)
     return tx, ty
 
 

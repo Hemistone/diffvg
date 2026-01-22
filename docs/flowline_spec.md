@@ -21,10 +21,10 @@ This document proposes a **Flowline** preconditioning mode that generates long, 
    - Use existing TEED/XDoG to compute a strength map `S ∈ [0,1]`.
    - Optional: TEED lineart intensity boost if enabled.
 
-2. **Orientation field**
-   - Compute structure tensor from image gradients (Sobel or Scharr).
-   - Smooth tensor field with Gaussian blur (σ configurable).
-   - Extract dominant **tangent direction** (per-pixel 2D unit vector) from eigenvectors.
+2. **Orientation field (ETF)**
+   - Compute image gradients and initial tangent field (perpendicular to gradient).
+   - Iteratively smooth the tangent field using **Edge Tangent Flow (ETF)**.
+   - ETF aligns local tangents into coherent stroke directions while preserving strong edges.
 
 3. **Seed selection**
    - Candidate pixels where `S >= seed_threshold` (quantile or fixed).
@@ -58,35 +58,40 @@ flow_max_len = 256
 flow_min_len = 8
 flow_min_seed_dist = 6
 flow_curvature_deg = 60
-flow_field_sigma = 2.0
-flow_field_iters = 1
+flow_field_sigma = 2.0  # ETF spatial smoothing sigma
+flow_field_iters = 1    # ETF smoothing iterations
 flow_coverage_decay = 0.85
 flow_coverage_radius = 2
 ```
 
 Notes:
 - `flow_seed_quantile` uses the edge strength map distribution.
-- `flow_field_sigma` controls smoothing of the structure tensor.
+- `flow_field_sigma` controls ETF spatial smoothing.
 - `flow_coverage_decay` dims strength where strokes already traced to avoid stacking.
 
 ---
 
 ## 4) Orientation Field Details
 
-Given grayscale image `I`:
+Given grayscale image `I`, compute the tangent field perpendicular to the gradient and
+smooth it with ETF-style orientation averaging:
 
 ```
 Gx, Gy = sobel(I)
-J = [[Gx^2, Gx*Gy], [Gx*Gy, Gy^2]]
-J_blur = gaussian_blur(J, sigma=flow_field_sigma)
+T0 = normalize([-Gy, Gx])
+theta = atan2(T0y, T0x)
+for i in range(flow_field_iters):
+  u = cos(2*theta) * |∇I|
+  v = sin(2*theta) * |∇I|
+  u = gaussian(u, sigma=flow_field_sigma)
+  v = gaussian(v, sigma=flow_field_sigma)
+  theta = 0.5 * atan2(v, u)
+T = (cos(theta), sin(theta))
 ```
 
-The tangent direction is orthogonal to the dominant gradient direction:
-- Compute eigenvectors of `J_blur` (2x2 per pixel).
-- Use **smallest eigenvalue vector** as tangent.
-- Normalize to unit vector.
-
-This gives a per-pixel flow field `T(x, y)` used for tracing.
+Using the **double-angle** representation lets us average orientations while treating
+`theta` and `theta + π` as equivalent (directionless), then recover a unit tangent field
+for tracing.
 
 ---
 
