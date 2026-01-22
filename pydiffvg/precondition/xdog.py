@@ -41,11 +41,18 @@ def xdog_edges(image: np.ndarray, cfg: PreconditionConfig) -> np.ndarray:
     edges = shaped < cfg.edge_threshold
 
     if cfg.min_component_area > 0:
-        edges = morphology.remove_small_objects(edges, cfg.min_component_area)
+        min_size = int(cfg.min_component_area)
+        try:
+            edges = morphology.remove_small_objects(edges, min_size=min_size)
+        except TypeError:
+            # Older skimage versions only accept positional args.
+            edges = morphology.remove_small_objects(edges, min_size)
     if cfg.morph_open_radius > 0:
         edges = morphology.binary_opening(edges, morphology.disk(cfg.morph_open_radius))
     if cfg.morph_close_radius > 0:
-        edges = morphology.binary_closing(edges, morphology.disk(cfg.morph_close_radius))
+        edges = morphology.binary_closing(
+            edges, morphology.disk(cfg.morph_close_radius)
+        )
 
     return edges
 
