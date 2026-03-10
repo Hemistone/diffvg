@@ -27,7 +27,15 @@ from .save_svg import save_svg
 from .serialization import serialize_scene
 
 # Backend selection API (minimal)
-from .backend import set_backend, get_backend, list_backends, get_backend_config, SplatConfig, DepthPolicy
+from .backend import (
+    set_backend,
+    get_backend,
+    list_backends,
+    get_backend_config,
+    SplatConfig,
+    BezierGsplatConfig,
+    DepthPolicy,
+)
 from .renderer import Renderer
 
 
@@ -55,6 +63,7 @@ __all__ = (
         "list_backends",
         "get_backend_config",
         "SplatConfig",
+        "BezierGsplatConfig",
         "DepthPolicy",
         "Renderer",
     ]

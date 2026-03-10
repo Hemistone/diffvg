@@ -1,13 +1,7 @@
 """Backend selection and configuration for pydiffvg.
 
-- set_backend/get_backend: choose between 'baseline' and 'splat'.
+- set_backend/get_backend: choose between the registered render backends.
 - get_backend_config: return config relevant to the current backend.
-
-Environment variables:
-- DIFFVG_BACKEND: select backend ('baseline' or 'splat')
-- DIFFVG_SPLAT_K, DIFFVG_SPLAT_R, DIFFVG_SPLAT_RHO
-- DIFFVG_SPLAT_TILE: tile size (int)
-- DIFFVG_DEPTH_POLICY: 'none' or 'small_first' (ignored by baseline)
 """
 
 from __future__ import annotations
@@ -34,16 +28,41 @@ class SplatConfig:
     depth_policy: DepthPolicy = DepthPolicy.none
 
 
-_BACKEND: str = (os.environ.get("DIFFVG_BACKEND", "baseline").strip() or "baseline").lower()
-if _BACKEND not in ("baseline", "splat"):
+@dataclass(frozen=True)
+class BezierGsplatConfig:
+    sample_spacing_px: float = 1.0
+    max_samples_per_segment: int = 64
+    block_h: int = 16
+    block_w: int = 16
+    min_scale: float = 1e-3
+    depth_mode: str = "scene_order"
+
+
+BackendConfig = SplatConfig | BezierGsplatConfig
+
+
+def _normalize_backend_name(name: Optional[str]) -> str:
+    key = (name or "baseline").strip().lower()
+    if key in ("baseline", "default"):
+        return "baseline"
+    if key == "splat":
+        return "splat"
+    if key in ("bezier_gsplat", "bezier-gsplat"):
+        return "bezier_gsplat"
+    return key
+
+
+_BACKEND: str = _normalize_backend_name(os.environ.get("DIFFVG_BACKEND", "baseline"))
+if _BACKEND not in ("baseline", "splat", "bezier_gsplat"):
     _BACKEND = "baseline"
 
 
 def set_backend(name: str) -> None:
     global _BACKEND
-    key = (name or "").strip().lower()
-    if key not in ("baseline", "splat"):
-        raise ValueError("backend must be 'baseline' or 'splat'")
+    key = _normalize_backend_name(name)
+    if key not in list_backends():
+        expected = ", ".join(f"'{item}'" for item in list_backends())
+        raise ValueError(f"backend must be one of {expected}")
     _BACKEND = key
 
 
@@ -75,6 +94,13 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_str(name: str, default: str) -> str:
+    v = os.environ.get(name)
+    if v is None or v.strip() == "":
+        return default
+    return v.strip()
+
+
 def _env_depth_policy(default: DepthPolicy) -> DepthPolicy:
     v = (os.environ.get("DIFFVG_DEPTH_POLICY", "").strip() or default.value).lower()
     if v in (DepthPolicy.none.value, DepthPolicy.small_first.value):
@@ -82,23 +108,44 @@ def _env_depth_policy(default: DepthPolicy) -> DepthPolicy:
     return default
 
 
-def get_backend_config(backend: Optional[str] = None) -> Optional[SplatConfig]:
+def get_backend_config(backend: Optional[str] = None) -> Optional[BackendConfig]:
     """Return configuration for the given backend (or current backend).
 
-    For 'baseline' this returns None. For 'splat' returns SplatConfig with
+    For 'baseline' this returns None. Backend-specific configs are returned with
     env overrides applied.
     """
-    name = (backend or _BACKEND).lower()
-    if name != "splat":
+    name = _normalize_backend_name(backend or _BACKEND)
+    if name == "baseline":
         return None
-    base = SplatConfig()
-    return SplatConfig(
-        K=_env_int("DIFFVG_SPLAT_K", base.K),
-        R=_env_int("DIFFVG_SPLAT_R", base.R),
-        rho=_env_float("DIFFVG_SPLAT_RHO", base.rho),
-        tile=_env_int("DIFFVG_SPLAT_TILE", base.tile),
-        depth_policy=_env_depth_policy(base.depth_policy),
-    )
+    if name == "splat":
+        base = SplatConfig()
+        return SplatConfig(
+            K=_env_int("DIFFVG_SPLAT_K", base.K),
+            R=_env_int("DIFFVG_SPLAT_R", base.R),
+            rho=_env_float("DIFFVG_SPLAT_RHO", base.rho),
+            tile=_env_int("DIFFVG_SPLAT_TILE", base.tile),
+            depth_policy=_env_depth_policy(base.depth_policy),
+        )
+    if name == "bezier_gsplat":
+        base = BezierGsplatConfig()
+        depth_mode = _env_str("DIFFVG_BEZIER_GSPLAT_DEPTH_MODE", base.depth_mode).lower()
+        if depth_mode != "scene_order":
+            depth_mode = base.depth_mode
+        return BezierGsplatConfig(
+            sample_spacing_px=_env_float(
+                "DIFFVG_BEZIER_GSPLAT_SAMPLE_SPACING_PX",
+                base.sample_spacing_px,
+            ),
+            max_samples_per_segment=_env_int(
+                "DIFFVG_BEZIER_GSPLAT_MAX_SAMPLES_PER_SEGMENT",
+                base.max_samples_per_segment,
+            ),
+            block_h=_env_int("DIFFVG_BEZIER_GSPLAT_BLOCK_H", base.block_h),
+            block_w=_env_int("DIFFVG_BEZIER_GSPLAT_BLOCK_W", base.block_w),
+            min_scale=_env_float("DIFFVG_BEZIER_GSPLAT_MIN_SCALE", base.min_scale),
+            depth_mode=depth_mode,
+        )
+    raise ValueError(f"Unknown backend '{name}'")
 
 
 __all__ = [
@@ -107,7 +154,8 @@ __all__ = [
     "current_api",
     "list_backends",
     "SplatConfig",
+    "BezierGsplatConfig",
+    "BackendConfig",
     "DepthPolicy",
     "get_backend_config",
 ]
-

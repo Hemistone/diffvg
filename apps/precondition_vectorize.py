@@ -14,18 +14,9 @@ import sys
 import tomllib
 from pathlib import Path
 
-# Precondition-only debugging should avoid CUDA init for faster, safer runs.
-os.environ["DIFFVG_DEVICE"] = "cpu"
-os.environ["DIFFVG_FORCE_CPU"] = "1"
-
 import numpy as np
 import torch
 from PIL import Image
-
-import pydiffvg
-from pydiffvg.precondition.cli import build_precondition_config
-from pydiffvg.palette import load_palette
-
 
 def _default_teed_weights_path() -> str | None:
     candidate = Path("weights/teed/5_model.pth")
@@ -46,19 +37,18 @@ def _load_config_defaults(config_path: str, parser: argparse.ArgumentParser) -> 
     return data
 
 
-def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
+def _rgba_over_white(img_rgba: torch.Tensor, backend: str) -> torch.Tensor:
     """Composite RGBA to RGB over white (matches painterly_rendering.py)."""
-    backend = pydiffvg.get_backend()
     a = img_rgba[:, :, 3:4].clamp(0.0, 1.0)
     rgb = img_rgba[:, :, :3]
-    if backend == "splat":
+    if backend in {"splat", "bezier_gsplat"}:
         premul = rgb
     else:
         premul = rgb * a
     return (premul + (1.0 - a)).clamp(0.0, 1.0)
 
 
-def _render(renderer: pydiffvg.Renderer, width: int, height: int, shapes, groups, device, cache_key="main", invalidate=False):
+def _render(renderer, width: int, height: int, shapes, groups, device, cache_key="main", invalidate=False):
     scene_args = renderer.serialize_scene(
         width,
         height,
@@ -78,7 +68,7 @@ def main() -> None:
     parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
     parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
     parser.add_argument("image", type=Path, help="Input raster image")
-    parser.add_argument("--backend", default="splat", choices=["baseline", "splat"], help="Render backend to use")
+    parser.add_argument("--backend", default="splat", choices=["baseline", "splat", "bezier_gsplat"], help="Render backend to use")
     parser.add_argument("--precondition", action="store_true", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--precond-mode",
@@ -168,6 +158,19 @@ def main() -> None:
         parser.set_defaults(**defaults)
     args = parser.parse_args(argv)
 
+    if args.backend == "bezier_gsplat":
+        os.environ.pop("DIFFVG_DEVICE", None)
+        os.environ.pop("DIFFVG_FORCE_CPU", None)
+    else:
+        # Precondition-only debugging stays on CPU unless the user explicitly
+        # asks for the CUDA-only gsplat backend.
+        os.environ["DIFFVG_DEVICE"] = "cpu"
+        os.environ["DIFFVG_FORCE_CPU"] = "1"
+
+    import pydiffvg
+    from pydiffvg.palette import load_palette
+    from pydiffvg.precondition.cli import build_precondition_config
+
     pydiffvg.set_backend(args.backend)
     device = pydiffvg.get_device()
     out_dir = args.out_dir
@@ -200,7 +203,7 @@ def main() -> None:
 
     init_img = _render(scene.renderer, scene.width, scene.height, scene.shapes, scene.shape_groups, device, invalidate=True)
     pydiffvg.imwrite(init_img, str(out_dir / "init_render.png"))
-    init_rgb = _rgba_over_white(init_img)
+    init_rgb = _rgba_over_white(init_img, args.backend)
     pydiffvg.imwrite(init_rgb, str(out_dir / "init_render_over_white.png"), gamma=1.0)
     print(f"Preconditioning complete: {len(scene.shapes)} paths generated. Outputs in {out_dir}")
 

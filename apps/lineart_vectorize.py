@@ -6,17 +6,9 @@ import argparse
 import os
 from pathlib import Path
 
-# Precondition-only debugging should avoid CUDA init for faster, safer runs.
-os.environ["DIFFVG_DEVICE"] = "cpu"
-os.environ["DIFFVG_FORCE_CPU"] = "1"
-
 import numpy as np
 import torch
 from PIL import Image
-
-import pydiffvg
-from pydiffvg.palette import load_palette
-
 
 def _load_rgb(path: Path) -> np.ndarray:
     with Image.open(path) as im:
@@ -29,7 +21,7 @@ def _load_rgb(path: Path) -> np.ndarray:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Line-art vectorization using preconditioning (no painterly noise).")
     parser.add_argument("image", type=Path, help="Input line-art raster")
-    parser.add_argument("--backend", default="baseline", choices=["baseline", "splat"], help="Render backend")
+    parser.add_argument("--backend", default="baseline", choices=["baseline", "splat", "bezier_gsplat"], help="Render backend")
     parser.add_argument("--precond-lineart-mask-count", dest="precond_lineart_mask_count", type=int, default=1, help="Number of inks/colors to extract")
     parser.add_argument("--precond-merge-distance", dest="precond_merge_distance", type=float, default=3.0, help="Endpoint merge distance in pixels")
     parser.add_argument("--precond-merge-angle-deg", dest="precond_merge_angle_deg", type=float, default=18.0, help="Max angle (deg) between tangents for merging")
@@ -39,6 +31,16 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path("results/lineart_vectorize"), help="Output directory")
     parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
     args = parser.parse_args()
+
+    if args.backend == "bezier_gsplat":
+        os.environ.pop("DIFFVG_DEVICE", None)
+        os.environ.pop("DIFFVG_FORCE_CPU", None)
+    else:
+        os.environ["DIFFVG_DEVICE"] = "cpu"
+        os.environ["DIFFVG_FORCE_CPU"] = "1"
+
+    import pydiffvg
+    from pydiffvg.palette import load_palette
 
     pydiffvg.set_backend(args.backend)
     device = pydiffvg.get_device()

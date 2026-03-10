@@ -137,12 +137,12 @@ def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
 
     Handles premultiplied vs straight-alpha differences between backends:
     - baseline returns straight RGB (needs multiply by A)
-    - splat returns premultiplied RGB (do NOT multiply by A again)
+    - splat/bezier_gsplat return premultiplied RGB (do NOT multiply by A again)
     """
     backend = pydiffvg.get_backend()
     a = img_rgba[:, :, 3:4].clamp(0.0, 1.0)
     rgb = img_rgba[:, :, :3]
-    if backend == "splat":
+    if backend in {"splat", "bezier_gsplat"}:
         premul = rgb  # RGB is already premultiplied in splat backend
     else:
         premul = rgb * a  # baseline provides straight (non-premultiplied) RGB
@@ -612,7 +612,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num-paths", dest="num_paths", type=int, default=512)
     parser.add_argument("--max-width", dest="max_width", type=float, default=2.0)
-    parser.add_argument("--backend", type=str, default="baseline", choices=["baseline", "splat"], help="Render backend")
+    parser.add_argument("--backend", type=str, default="baseline", choices=pydiffvg.list_backends(), help="Render backend")
     parser.add_argument("--precondition", action="store_true", help="Seed paths via preconditioning instead of random init")
     parser.add_argument(
         "--precond-mode",
