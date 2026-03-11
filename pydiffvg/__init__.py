@@ -11,6 +11,7 @@ from . import color as _color
 from . import optimize_svg as _optimize_svg
 from . import optimize as _optimize
 from . import precondition as _precondition
+from . import plotter as _plotter
 
 from .device import *  # noqa: F401,F403 - re-exported for legacy callers
 from .shape import *  # noqa: F401,F403
@@ -19,6 +20,7 @@ from .color import *  # noqa: F401,F403
 from .optimize_svg import *  # noqa: F401,F403
 from .optimize import SvgOptimizationDriver, SvgParserMixin, SvgWriterMixin
 from .precondition import *  # noqa: F401,F403
+from .plotter import *  # noqa: F401,F403
 
 from .render_pytorch import RenderFunction, OutputType, set_print_timing
 from .image import imwrite
@@ -47,6 +49,7 @@ __all__ = (
     + list(_optimize_svg.__all__)
     + list(_optimize.__all__)
     + list(_precondition.__all__)
+    + list(_plotter.__all__)
     + [
         "RenderFunction",
         "OutputType",

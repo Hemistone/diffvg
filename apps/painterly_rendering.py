@@ -590,17 +590,17 @@ def main(args):
     img = _render(0)
     final_rgb = _rgba_over_white(img)
     pydiffvg.imwrite(final_rgb.cpu(), str(run.results_dir / "final.png"), gamma=gamma)
-    # Also emit final SVG with white background if requested
-    if getattr(args, "save_svg_every", 0) and getattr(args, "save_svg_every", 0) > 0:
-        pydiffvg.save_svg(
-            str(run.results_dir / "final.svg"),
-            canvas_width,
-            canvas_height,
-            shapes,
-            shape_groups,
-            use_gamma=False,
-            background_rgb=(1.0, 1.0, 1.0),
-        )
+    # Always emit the final SVG so downstream plotter tooling can inspect the
+    # optimized vector output even when intermediate SVG checkpoints are off.
+    pydiffvg.save_svg(
+        str(run.results_dir / "final.svg"),
+        canvas_width,
+        canvas_height,
+        shapes,
+        shape_groups,
+        use_gamma=False,
+        background_rgb=(1.0, 1.0, 1.0),
+    )
 
     run.make_video()
 
