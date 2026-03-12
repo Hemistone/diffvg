@@ -21,7 +21,7 @@ Bezier Splatting codebase.
 
 ## Current Direction
 
-The maintained mainline path is now a **stroke-first compiled renderer**:
+The maintained mainline path is now a stroke-first compiled renderer:
 
 - public Python scene objects stay diffvg-like (`Path`, `ShapeGroup`, SVG I/O)
 - the maintained runtime backend is `bezier_gsplat`
@@ -86,13 +86,23 @@ Implemented in this phase:
 - batched cubic sampling via cached Bernstein bases
 - painterly/precondition/bench flows now default to the stroke-first backend
 - legacy backends gated behind `DIFFVG_ENABLE_LEGACY`
+- renderer-only microbenchmark harness in `apps/bench_renderer_micro.py`
 
 Still intentionally deferred:
 
 - removal of old exact-renderer code from the tree
 - migration of every legacy sample app
-- renderer-only microbenchmark harness
+- global packed parameter bank for eliminating remaining per-iteration tensor packing
 - plotter-aware optimization objectives beyond hard palette/width constraints
+
+## Benchmark Entry Points
+
+- App-level painterly benchmark: `apps/bench_painterly_backends.py`
+- Renderer-only microbenchmark: `apps/bench_renderer_micro.py`
+
+The microbenchmark is the preferred tool for separating compile, forward,
+backward, and one-step timing from app-level logging, SVG, and loss-pipeline
+overhead.
 
 ## Files To Start From
 
@@ -103,3 +113,4 @@ Still intentionally deferred:
 - `pydiffvg/backends/registry.py`
 - `apps/painterly_rendering.py`
 - `apps/bench_painterly_backends.py`
+- `apps/bench_renderer_micro.py`
