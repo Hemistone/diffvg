@@ -68,7 +68,7 @@ def main() -> None:
     parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
     parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
     parser.add_argument("image", type=Path, help="Input raster image")
-    parser.add_argument("--backend", default="splat", choices=["baseline", "splat", "bezier_gsplat"], help="Render backend to use")
+    parser.add_argument("--backend", default="bezier_gsplat", choices=["bezier_gsplat", "baseline", "splat"], help="Render backend to use")
     parser.add_argument("--precondition", action="store_true", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--precond-mode",

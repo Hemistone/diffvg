@@ -4,10 +4,10 @@ import pydiffvg
 import time
 import os
 import sys
-from enum import IntEnum
 from .serialization import serialize_scene as _serialize_scene
 from . import dev as _dev
 from .backend import current_api
+from .output import OutputType
 
 # Backward-compat wrapper: keep old API while centralizing the flag
 print_timing = False
@@ -16,10 +16,6 @@ def set_print_timing(val):
     global print_timing
     print_timing = bool(val)
     _dev.set_print_timing(bool(val))
-
-class OutputType(IntEnum):
-    color = 1
-    sdf = 2
 
 class BaselineRenderFunction(torch.autograd.Function):
     """

@@ -137,12 +137,12 @@ def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
 
     Handles premultiplied vs straight-alpha differences between backends:
     - baseline returns straight RGB (needs multiply by A)
-    - splat/bezier_gsplat return premultiplied RGB (do NOT multiply by A again)
+    - bezier_gsplat returns premultiplied RGB (do NOT multiply by A again)
     """
     backend = pydiffvg.get_backend()
     a = img_rgba[:, :, 3:4].clamp(0.0, 1.0)
     rgb = img_rgba[:, :, :3]
-    if backend in {"splat", "bezier_gsplat"}:
+    if backend == "bezier_gsplat":
         premul = rgb  # RGB is already premultiplied in splat backend
     else:
         premul = rgb * a  # baseline provides straight (non-premultiplied) RGB
@@ -153,10 +153,12 @@ gamma = 1.0
 
 
 def main(args):
-    backend = getattr(args, "backend", "baseline").strip().lower()
+    backend = getattr(args, "backend", pydiffvg.get_backend()).strip().lower()
     pydiffvg.set_backend(backend)
     use_gpu = pydiffvg.get_device().type == "cuda"
     pydiffvg.set_use_gpu(use_gpu)
+    if backend == "bezier_gsplat" and getattr(args, "use_blob", False):
+        raise ValueError("The stroke-first bezier_gsplat backend does not support --use-blob.")
 
     precondition = bool(getattr(args, "precondition", False))
     precond_mode = (getattr(args, "precond_mode", "xdog") or "xdog").strip().lower()
@@ -480,16 +482,32 @@ def main(args):
                 )
             shape_groups.append(path_group)
 
-    def _render(seed: int, invalidate: bool = True):
-        scene_args = renderer.serialize_scene(
-            canvas_width,
-            canvas_height,
-            shapes,
-            shape_groups,
-            device=device,
-            cache_key="main",
-            invalidate_cache=invalidate,
-        )
+    persistent_scene = backend == "bezier_gsplat"
+    scene_args_cache = [None]
+
+    def _render(seed: int, invalidate: bool = False):
+        if persistent_scene:
+            if scene_args_cache[0] is None or invalidate:
+                scene_args_cache[0] = renderer.serialize_scene(
+                    canvas_width,
+                    canvas_height,
+                    shapes,
+                    shape_groups,
+                    device=device,
+                    cache_key="main",
+                    invalidate_cache=bool(invalidate),
+                )
+            scene_args = scene_args_cache[0]
+        else:
+            scene_args = renderer.serialize_scene(
+                canvas_width,
+                canvas_height,
+                shapes,
+                shape_groups,
+                device=device,
+                cache_key="main",
+                invalidate_cache=True,
+            )
         return renderer.apply(
             canvas_width,
             canvas_height,
@@ -500,7 +518,7 @@ def main(args):
             *scene_args,
         )
 
-    img = _render(0, invalidate=False)
+    img = _render(0, invalidate=True)
     # Save initial frame composited over white for visualization
     init_rgb = _rgba_over_white(img)
     pydiffvg.imwrite(init_rgb.cpu(), str(run.results_dir / "init.png"), gamma=gamma)
@@ -612,7 +630,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num-paths", dest="num_paths", type=int, default=512)
     parser.add_argument("--max-width", dest="max_width", type=float, default=2.0)
-    parser.add_argument("--backend", type=str, default="baseline", choices=pydiffvg.list_backends(), help="Render backend")
+    parser.add_argument("--backend", type=str, default=pydiffvg.get_backend(), choices=pydiffvg.list_backends(), help="Render backend")
     parser.add_argument("--precondition", action="store_true", help="Seed paths via preconditioning instead of random init")
     parser.add_argument(
         "--precond-mode",

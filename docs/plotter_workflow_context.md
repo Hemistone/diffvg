@@ -4,6 +4,9 @@ This document captures the current engineering/research context for the
 `feature/bezier-gsplat-backend` work. It is intended to help future sessions
 recover the reasoning behind the current code layout and benchmark choices.
 
+For the later stroke-first engine rewrite, also see
+`docs/stroke_first_reboot.md`.
+
 ## Project Direction
 
 The long-term goal is not just a faster raster reconstruction backend.

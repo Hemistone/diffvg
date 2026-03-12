@@ -21,7 +21,7 @@ def _load_rgb(path: Path) -> np.ndarray:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Line-art vectorization using preconditioning (no painterly noise).")
     parser.add_argument("image", type=Path, help="Input line-art raster")
-    parser.add_argument("--backend", default="baseline", choices=["baseline", "splat", "bezier_gsplat"], help="Render backend")
+    parser.add_argument("--backend", default="bezier_gsplat", choices=["bezier_gsplat", "baseline", "splat"], help="Render backend")
     parser.add_argument("--precond-lineart-mask-count", dest="precond_lineart_mask_count", type=int, default=1, help="Number of inks/colors to extract")
     parser.add_argument("--precond-merge-distance", dest="precond_merge_distance", type=float, default=3.0, help="Endpoint merge distance in pixels")
     parser.add_argument("--precond-merge-angle-deg", dest="precond_merge_angle_deg", type=float, default=18.0, help="Max angle (deg) between tangents for merging")
@@ -89,17 +89,28 @@ def main() -> None:
                 params.append(group.stroke_color)
         opt = torch.optim.Adam(params, lr=1e-1)
         target = torch.tensor(np.concatenate([rgb, np.ones((rgb.shape[0], rgb.shape[1], 1), dtype=np.float32)], axis=2), device=device)
+        persistent_scene = args.backend == "bezier_gsplat"
+        scene_args = renderer.serialize_scene(
+            scene.width,
+            scene.height,
+            scene.shapes,
+            scene.shape_groups,
+            device=device,
+            cache_key="main",
+            invalidate_cache=True,
+        )
         for t in range(args.refine_iters):
             opt.zero_grad()
-            scene_args = renderer.serialize_scene(
-                scene.width,
-                scene.height,
-                scene.shapes,
-                scene.shape_groups,
-                device=device,
-                cache_key="main",
-                invalidate_cache=True,
-            )
+            if not persistent_scene:
+                scene_args = renderer.serialize_scene(
+                    scene.width,
+                    scene.height,
+                    scene.shapes,
+                    scene.shape_groups,
+                    device=device,
+                    cache_key="main",
+                    invalidate_cache=True,
+                )
             img = renderer.apply(scene.width, scene.height, 2, 2, t, None, *scene_args)
             loss = ((img[..., :3] - target[..., :3]) ** 2).mean()
             loss.backward()

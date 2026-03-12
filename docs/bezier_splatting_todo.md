@@ -3,6 +3,7 @@
 Reference
 
 - See docs/bezier_splatting.md for equations, sampling, Gaussian parameterization, alpha blending, backward, and the integration notes targeting the modern pybind11-backed diffvg.
+- See docs/stroke_first_reboot.md for the later compiled open-stroke engine direction that made `bezier_gsplat` the maintained mainline path.
 - See docs/plotter_workflow_context.md for the current product/workflow framing, plotter benchmark rationale, and recent backend-vs-plotter findings.
 
 Goals

@@ -94,7 +94,9 @@ def _parse_int_csv(raw: str) -> list[int]:
 
 def _normalize_backend_name(name: str) -> str:
     key = (name or "").strip().lower()
-    if key in ("baseline", "default"):
+    if key == "default":
+        return "bezier_gsplat"
+    if key == "baseline":
         return "baseline"
     if key == "splat":
         return "splat"
@@ -506,7 +508,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--backends",
         type=_parse_csv_list,
-        default=list(pydiffvg.list_backends()),
+        default=[pydiffvg.get_backend()],
         help="comma-separated backends to benchmark",
     )
     parser.add_argument(
@@ -627,6 +629,8 @@ def main() -> None:
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["DIFFVG_DEVICE"] = args.device
+    if any(name in {"baseline", "splat"} for name in args.backends):
+        env["DIFFVG_ENABLE_LEGACY"] = "1"
 
     print(f"[bench] target={target}")
     print(f"[bench] report_dir={report_dir}")

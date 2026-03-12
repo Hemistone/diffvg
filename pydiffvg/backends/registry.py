@@ -1,33 +1,47 @@
-"""Backend registry for pydiffvg (internal).
+"""Backend registry for pydiffvg.
 
-Provides a tiny indirection so the library can switch between the original
-diffvg baseline renderer and alternative differentiable rasterizers without
-changing the public API surface.
+The maintained product path is the compiled open-stroke `bezier_gsplat`
+backend. Legacy backends remain opt-in via DIFFVG_ENABLE_LEGACY=1.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 
 @dataclass(frozen=True)
 class RenderAPI:
-    """Simple function bundle for a render backend.
-
-    - serialize_scene: builds the argument tuple for RenderFunction
-    - apply: forward pass (typically RenderFunction.apply)
-    - render_grad: backward helper (typically RenderFunction.render_grad)
-    """
-
     serialize_scene: Callable[..., tuple]
     apply: Callable[..., object]
     render_grad: Callable[..., tuple]
     prefer_device_serialization: bool = False
 
 
+def _legacy_disabled_api(name: str) -> RenderAPI:
+    def _fail(*args, **kwargs):
+        raise RuntimeError(
+            f"The '{name}' backend is now legacy-only. "
+            "Use 'bezier_gsplat' for the maintained stroke-first engine, or set "
+            "DIFFVG_ENABLE_LEGACY=1 to re-enable legacy backends for comparison."
+        )
+
+    return RenderAPI(
+        serialize_scene=_fail,
+        apply=_fail,
+        render_grad=_fail,
+        prefer_device_serialization=False,
+    )
+
+
+def _legacy_enabled() -> bool:
+    return os.environ.get("DIFFVG_ENABLE_LEGACY", "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
 def _baseline_api() -> RenderAPI:
-    # Import locally to avoid import cycles at package import time
+    if not _legacy_enabled():
+        return _legacy_disabled_api("baseline")
     from ..render_pytorch import BaselineRenderFunction as RF
 
     return RenderAPI(
@@ -39,6 +53,8 @@ def _baseline_api() -> RenderAPI:
 
 
 def _splat_api() -> RenderAPI:
+    if not _legacy_enabled():
+        return _legacy_disabled_api("splat")
     from .. import render_splat as _splat
 
     return RenderAPI(
@@ -61,24 +77,20 @@ def _bezier_gsplat_api() -> RenderAPI:
 
 
 def get_api(name: Optional[str] = None) -> RenderAPI:
-    """Return the RenderAPI for the given backend name.
-
-    Known names: "baseline", "splat", "bezier_gsplat" (case-insensitive).
-    """
-    key = (name or "baseline").strip().lower()
-    if key in ("baseline", "default"):
+    key = (name or "bezier_gsplat").strip().lower()
+    if key in ("default", "bezier", "openstroke", "bezier_gsplat", "bezier-gsplat"):
+        return _bezier_gsplat_api()
+    if key == "baseline":
         return _baseline_api()
     if key == "splat":
         return _splat_api()
-    if key in ("bezier_gsplat", "bezier-gsplat"):
-        return _bezier_gsplat_api()
     raise ValueError(
-        f"Unknown backend '{name}'. Expected 'baseline', 'splat', or 'bezier_gsplat'."
+        f"Unknown backend '{name}'. Expected 'bezier_gsplat', 'baseline', or 'splat'."
     )
 
 
 def list_backends() -> tuple[str, ...]:
-    return ("baseline", "splat", "bezier_gsplat")
+    return ("bezier_gsplat", "baseline", "splat")
 
 
 __all__ = ["RenderAPI", "get_api", "list_backends"]
