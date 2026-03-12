@@ -194,6 +194,11 @@ def _gather_metadata(requested_device: str) -> dict:
     return metadata
 
 
+def _report_stamp() -> str:
+    now = datetime.now()
+    return now.strftime("%Y%m%d_%H%M%S_%f") + f"_{os.getpid()}"
+
+
 def _build_temp_config(contents: str, *, prefix: str) -> tuple[tempfile.TemporaryDirectory[str], Path]:
     temp_dir = tempfile.TemporaryDirectory(prefix="painterly-bench-", dir="/tmp")
     config_path = Path(temp_dir.name) / f"{prefix}.toml"
@@ -210,15 +215,45 @@ def _default_plotter_config(plotter_mode: str) -> Path:
     return mapping[plotter_mode]
 
 
+def _resolve_plotter_preset(
+    preset: str | None,
+) -> tuple[str | None, Optional[Path], Optional[str]]:
+    if preset is None:
+        return None, None, None
+    key = preset.strip().lower()
+    mapping: dict[str, tuple[str, Path, str]] = {
+        "single_black": (
+            "teed",
+            REPO_ROOT / "configs" / "precondition" / "teed_plotter_single_black.toml",
+            "single_black_pen",
+        ),
+        "trio": (
+            "lineart",
+            REPO_ROOT / "configs" / "precondition" / "lineart_plotter_trio.toml",
+            "plotter_trio",
+        ),
+    }
+    if key not in mapping:
+        raise ValueError(f"unsupported plotter preset '{preset}'")
+    mode, config_path, palette = mapping[key]
+    return mode, config_path, palette
+
+
 def _resolve_palette(args: argparse.Namespace) -> Optional[str]:
     if args.palette:
         return args.palette
+    if args.plotter_preset is not None:
+        _, _, palette = _resolve_plotter_preset(args.plotter_preset)
+        return palette
     if args.plotter_mode is not None:
         return "single_black_pen"
     return None
 
 
 def _resolve_config(args: argparse.Namespace) -> tuple[Optional[tempfile.TemporaryDirectory[str]], Optional[Path]]:
+    if args.plotter_preset is not None:
+        _, config_path, _ = _resolve_plotter_preset(args.plotter_preset)
+        return None, config_path
     if args.config:
         config_path = (REPO_ROOT / args.config).resolve() if not Path(args.config).is_absolute() else Path(args.config)
         if not config_path.is_file():
@@ -492,6 +527,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--use-blob", action="store_true", help="forwarded to painterly_rendering.py")
     parser.add_argument("--device", type=str, default="cuda", help="DIFFVG_DEVICE for subprocesses")
     parser.add_argument(
+        "--plotter-preset",
+        type=str,
+        default=None,
+        choices=["single_black", "trio"],
+        help="shorthand for a built-in plotter preset; implies --precondition and selects config/palette defaults",
+    )
+    parser.add_argument(
         "--plotter-mode",
         type=str,
         default=None,
@@ -532,7 +574,14 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
+    if args.plotter_preset is not None and args.config is not None:
+        raise ValueError("--plotter-preset and --config are mutually exclusive")
+    if args.plotter_preset is not None and args.plotter_mode is not None:
+        raise ValueError("--plotter-preset and --plotter-mode are mutually exclusive")
     args.plotter_mode = _normalize_plotter_mode(args.plotter_mode)
+    if args.plotter_preset is not None:
+        preset_mode, _, _ = _resolve_plotter_preset(args.plotter_preset)
+        args.plotter_mode = preset_mode
     if args.plotter_mode is not None:
         args.precondition = True
 
@@ -548,7 +597,7 @@ def main() -> None:
         raise ValueError(f"unknown backends requested: {unknown}")
     args.backends = backends
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = _report_stamp()
     report_dir = BENCH_ROOT / timestamp
     logs_dir = report_dir / "logs"
     plotter_dir = report_dir / "plotter"
@@ -562,6 +611,7 @@ def main() -> None:
     metadata["target"] = str(target)
     metadata["config"] = str(config_path) if config_path is not None else None
     metadata["palette"] = palette
+    metadata["plotter_preset"] = args.plotter_preset
     metadata["precondition"] = bool(args.precondition)
     metadata["plotter_mode"] = args.plotter_mode
     metadata["plotter_report"] = bool(args.plotter_report)
@@ -585,6 +635,8 @@ def main() -> None:
         print(f"[bench] config={config_path}")
     if palette is not None:
         print(f"[bench] palette={palette}")
+    if args.plotter_preset is not None:
+        print(f"[bench] plotter_preset={args.plotter_preset}")
     if args.plotter_mode is not None:
         print(f"[bench] plotter_mode={args.plotter_mode}")
 

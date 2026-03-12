@@ -43,6 +43,18 @@ Palette-based styles:
 python apps/painterly_rendering.py --palette single_black_pen imgs/scream.jpg
 ```
 
+Plotter-oriented single-pen preset:
+
+```bash
+python apps/painterly_rendering.py --config configs/precondition/teed_plotter_single_black.toml imgs/scream.jpg
+```
+
+Plotter-oriented 3-pen lineart preset:
+
+```bash
+python apps/painterly_rendering.py --config configs/precondition/lineart_plotter_trio.toml imgs/scream.jpg
+```
+
 Precondition-only debug run:
 
 ```bash
@@ -70,6 +82,18 @@ Palette-based styles (precondition-only):
 python apps/precondition_vectorize.py --palette single_black_pen imgs/scream.jpg
 ```
 
+Plotter-oriented single-pen precondition-only debug run:
+
+```bash
+python apps/precondition_vectorize.py --config configs/precondition/teed_plotter_single_black.toml imgs/scream.jpg
+```
+
+Plotter-oriented 3-pen lineart debug run:
+
+```bash
+python apps/precondition_vectorize.py --config configs/precondition/lineart_plotter_trio.toml imgs/scream.jpg
+```
+
 ## Presets
 
 - `precondition/teed.toml`: baseline TEED defaults for shared preconditioning.
@@ -79,6 +103,9 @@ python apps/precondition_vectorize.py --palette single_black_pen imgs/scream.jpg
 - `precondition/lineart_quantile.toml`: lineart preset using quantile thresholding.
 - `precondition/flowline.toml`: flowline preset using TEED edge strength.
 - `palette/single_black_pen.toml`: example palette preset.
+- `palette/plotter_trio.toml`: 3-pen plotter palette with fixed physical widths.
+- `precondition/teed_plotter_single_black.toml`: fixed-width single-black plotter preset.
+- `precondition/lineart_plotter_trio.toml`: fixed-palette 3-pen lineart plotter preset.
 
 ## Palette format
 

@@ -1,0 +1,7 @@
+name = "plotter_trio"
+
+entries = [
+  { name = "dark_green_03", width_mm = 0.30, color = "#1E4D2BEE" },
+  { name = "rose_05", width_mm = 0.50, color = "#B8456EEE" },
+  { name = "umber_08", width_mm = 0.80, color = "#5C4033EE" },
+]

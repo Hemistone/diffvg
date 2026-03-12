@@ -183,6 +183,22 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/bench_painterly_backends.py \
   --plotter-cleanup
 ```
 
+Equivalent shorthand using the built-in bench preset:
+
+```bash
+source .venv/bin/activate
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/bench_painterly_backends.py \
+  apps/imgs/flower.jpg \
+  --backends baseline,splat,bezier_gsplat \
+  --path-counts 128,512 \
+  --num-iter 8 \
+  --repeats 1 \
+  --warmup 0 \
+  --plotter-preset single_black \
+  --plotter-report \
+  --plotter-cleanup
+```
+
 Multi-pen lineart benchmark:
 
 ```bash
@@ -200,6 +216,28 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/bench_painterly_backends.py \
   --plotter-report \
   --plotter-cleanup
 ```
+
+Equivalent shorthand using the built-in bench preset:
+
+```bash
+source .venv/bin/activate
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/bench_painterly_backends.py \
+  apps/imgs/flower.jpg \
+  --backends baseline \
+  --path-counts 128 \
+  --num-iter 8 \
+  --repeats 1 \
+  --warmup 0 \
+  --plotter-preset trio \
+  --plotter-report \
+  --plotter-cleanup
+```
+
+The repo also includes preset files for these workflows:
+
+- `configs/precondition/teed_plotter_single_black.toml`
+- `configs/precondition/lineart_plotter_trio.toml`
+- `configs/palette/plotter_trio.toml`
 
 ## Current Open Questions
 

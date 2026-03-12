@@ -1,0 +1,26 @@
+# Plotter-oriented 3-pen lineart preset.
+# Uses argparse dest names (underscores), not CLI flag names.
+
+precondition = true
+palette = "plotter_trio"
+precond_mode = "lineart"
+precond_lineart_threshold_mode = "quantile"
+precond_lineart_threshold_quantile = 0.22
+precond_lineart_mask_count = 3
+precond_lineart_mask_mode = "fixed"
+precond_lineart_mask_colors = [
+  [0.12, 0.30, 0.16],
+  [0.78, 0.46, 0.56],
+  [0.48, 0.33, 0.24],
+]
+
+precond_min_path_length = 10
+precond_max_path_length = 180
+precond_min_component_area = 16
+precond_morph_open_radius = 1
+precond_morph_close_radius = 1
+precond_force_open_paths = true
+
+precond_width_mode = "a4_pen"
+precond_width_min_mm = 0.30
+precond_width_max_mm = 0.80
