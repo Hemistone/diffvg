@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Benchmark painterly_rendering.py across multiple backends and path counts.
+"""Benchmark painterly_rendering.py for the maintained stroke-first backend.
 
 Examples:
   python apps/bench_painterly_backends.py apps/imgs/flower.jpg
-  python apps/bench_painterly_backends.py apps/imgs/flower.jpg --backends baseline,splat,bezier_gsplat --path-counts 128,512,1024 --num-iter 8 --repeats 3
+  python apps/bench_painterly_backends.py apps/imgs/flower.jpg --backends bezier_gsplat --path-counts 128,512,1024 --num-iter 8 --repeats 3
   python apps/bench_painterly_backends.py apps/imgs/flower.jpg --precondition --config configs/precondition/teed_detail_quantile.toml --backends bezier_gsplat --path-counts 16
   python apps/bench_painterly_backends.py apps/imgs/flower.jpg --plotter-mode teed --plotter-report --plotter-cleanup --device cpu
 """
@@ -31,7 +31,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import diffvg
 import torch
 
 import pydiffvg
@@ -94,13 +93,7 @@ def _parse_int_csv(raw: str) -> list[int]:
 
 def _normalize_backend_name(name: str) -> str:
     key = (name or "").strip().lower()
-    if key == "default":
-        return "bezier_gsplat"
-    if key == "baseline":
-        return "baseline"
-    if key == "splat":
-        return "splat"
-    if key in ("bezier_gsplat", "bezier-gsplat"):
+    if key in ("default", "bezier_gsplat", "bezier-gsplat"):
         return "bezier_gsplat"
     raise ValueError(f"unsupported backend '{name}'")
 
@@ -180,7 +173,6 @@ def _gather_metadata(requested_device: str) -> dict:
         "torch": torch.__version__,
         "torch_cuda": torch.version.cuda,
         "requested_device": requested_device,
-        "diffvg_cuda_compiled": bool(getattr(diffvg, "is_cuda_compiled", lambda: False)()),
         "available_backends": list(pydiffvg.list_backends()),
         "git_branch": _git_output(["rev-parse", "--abbrev-ref", "HEAD"]),
         "git_commit": _git_output(["rev-parse", "HEAD"]),
@@ -507,7 +499,7 @@ def _parse_args() -> argparse.Namespace:
         "--backends",
         type=_parse_csv_list,
         default=[pydiffvg.get_backend()],
-        help="comma-separated backends to benchmark (baseline/splat are legacy comparison paths)",
+        help="comma-separated backends to benchmark",
     )
     parser.add_argument(
         "--path-counts",
@@ -626,9 +618,6 @@ def main() -> None:
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["DIFFVG_DEVICE"] = args.device
-    if any(name in {"baseline", "splat"} for name in args.backends):
-        env["DIFFVG_ENABLE_LEGACY"] = "1"
-
     print(f"[bench] target={target}")
     print(f"[bench] report_dir={report_dir}")
     print(f"[bench] backends={','.join(args.backends)} paths={','.join(str(v) for v in args.path_counts)}")

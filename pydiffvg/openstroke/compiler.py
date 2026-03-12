@@ -5,20 +5,9 @@ from typing import List, Sequence
 import torch
 
 from ..device import get_device
+from ..output import OutputType
 from ..shape import Path, Polygon
 from .compiled import CompiledOpenStrokeScene, OpenStrokeUnsupported, ShapeRef, StyleRef
-
-
-class _OutputTypeCompat:
-    color = 1
-
-
-def _output_color_constant():
-    try:
-        from ..render_pytorch import OutputType
-        return OutputType.color
-    except Exception:
-        return _OutputTypeCompat.color
 
 
 def _is_identity_transform(transform: torch.Tensor) -> bool:
@@ -126,8 +115,7 @@ def compile_scene(
     device: torch.device | str | None = None,
 ) -> CompiledOpenStrokeScene:
     target_device = torch.device(device) if device is not None else get_device()
-    output_color = _output_color_constant()
-    if output_type is not None and output_type != output_color:
+    if output_type is not None and output_type != OutputType.color:
         raise OpenStrokeUnsupported("only OutputType.color is supported")
     if use_prefiltering:
         raise OpenStrokeUnsupported("prefiltering is not supported")

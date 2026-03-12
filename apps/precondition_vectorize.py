@@ -41,10 +41,7 @@ def _rgba_over_white(img_rgba: torch.Tensor, backend: str) -> torch.Tensor:
     """Composite RGBA to RGB over white (matches painterly_rendering.py)."""
     a = img_rgba[:, :, 3:4].clamp(0.0, 1.0)
     rgb = img_rgba[:, :, :3]
-    if backend in {"splat", "bezier_gsplat"}:
-        premul = rgb
-    else:
-        premul = rgb * a
+    premul = rgb
     return (premul + (1.0 - a)).clamp(0.0, 1.0)
 
 
@@ -71,8 +68,8 @@ def main() -> None:
     parser.add_argument(
         "--backend",
         default="bezier_gsplat",
-        choices=["bezier_gsplat", "baseline", "splat"],
-        help="Render backend to use (baseline/splat are legacy comparison paths)",
+        choices=["bezier_gsplat"],
+        help="Render backend to use",
     )
     parser.add_argument("--precondition", action="store_true", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -163,14 +160,8 @@ def main() -> None:
         parser.set_defaults(**defaults)
     args = parser.parse_args(argv)
 
-    if args.backend == "bezier_gsplat":
-        os.environ.pop("DIFFVG_DEVICE", None)
-        os.environ.pop("DIFFVG_FORCE_CPU", None)
-    else:
-        # Precondition-only debugging stays on CPU unless the user explicitly
-        # asks for the CUDA-only gsplat backend.
-        os.environ["DIFFVG_DEVICE"] = "cpu"
-        os.environ["DIFFVG_FORCE_CPU"] = "1"
+    os.environ.pop("DIFFVG_DEVICE", None)
+    os.environ.pop("DIFFVG_FORCE_CPU", None)
 
     import pydiffvg
     from pydiffvg.palette import load_palette

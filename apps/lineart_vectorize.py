@@ -24,8 +24,8 @@ def main() -> None:
     parser.add_argument(
         "--backend",
         default="bezier_gsplat",
-        choices=["bezier_gsplat", "baseline", "splat"],
-        help="Render backend (baseline/splat are legacy comparison paths)",
+        choices=["bezier_gsplat"],
+        help="Render backend",
     )
     parser.add_argument("--precond-lineart-mask-count", dest="precond_lineart_mask_count", type=int, default=1, help="Number of inks/colors to extract")
     parser.add_argument("--precond-merge-distance", dest="precond_merge_distance", type=float, default=3.0, help="Endpoint merge distance in pixels")
@@ -37,12 +37,8 @@ def main() -> None:
     parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
     args = parser.parse_args()
 
-    if args.backend == "bezier_gsplat":
-        os.environ.pop("DIFFVG_DEVICE", None)
-        os.environ.pop("DIFFVG_FORCE_CPU", None)
-    else:
-        os.environ["DIFFVG_DEVICE"] = "cpu"
-        os.environ["DIFFVG_FORCE_CPU"] = "1"
+    os.environ.pop("DIFFVG_DEVICE", None)
+    os.environ.pop("DIFFVG_FORCE_CPU", None)
 
     import pydiffvg
     from pydiffvg.palette import load_palette

@@ -1,32 +1,12 @@
-"""Backend selection and configuration for pydiffvg.
-
-The maintained product path is the stroke-first `bezier_gsplat` backend.
-Legacy exact/generic backends remain opt-in for comparison only.
-"""
+"""Backend selection and configuration for pydiffvg."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from enum import Enum
 from typing import Optional
 
 from .backends.registry import RenderAPI, get_api, list_backends
-
-
-class DepthPolicy(str, Enum):
-    none = "none"
-    small_first = "small_first"
-
-
-@dataclass(frozen=True)
-class SplatConfig:
-    K: int = 8
-    R: int = 2
-    rho: float = 1.0
-    tile: int = 32
-    depth_policy: DepthPolicy = DepthPolicy.none
-
 
 @dataclass(frozen=True)
 class BezierGsplatConfig:
@@ -38,14 +18,14 @@ class BezierGsplatConfig:
     detach_geometry: bool = True
 
 
-BackendConfig = SplatConfig | BezierGsplatConfig
+BackendConfig = BezierGsplatConfig
 
 
 def _normalize_backend_name(name: Optional[str]) -> str:
     key = (name or "bezier_gsplat").strip().lower()
     if key in ("default", "bezier", "openstroke", "bezier-gsplat"):
         return "bezier_gsplat"
-    if key in ("baseline", "splat", "bezier_gsplat"):
+    if key == "bezier_gsplat":
         return key
     return key
 
@@ -106,22 +86,8 @@ def _env_str(name: str, default: str) -> str:
     return v.strip()
 
 
-def get_backend_config(backend: Optional[str] = None) -> Optional[BackendConfig]:
+def get_backend_config(backend: Optional[str] = None) -> BackendConfig:
     name = _normalize_backend_name(backend or _BACKEND)
-    if name == "baseline":
-        return None
-    if name == "splat":
-        base = SplatConfig()
-        depth_policy = _env_str("DIFFVG_DEPTH_POLICY", base.depth_policy.value).lower()
-        if depth_policy not in (DepthPolicy.none.value, DepthPolicy.small_first.value):
-            depth_policy = base.depth_policy.value
-        return SplatConfig(
-            K=_env_int("DIFFVG_SPLAT_K", base.K),
-            R=_env_int("DIFFVG_SPLAT_R", base.R),
-            rho=_env_float("DIFFVG_SPLAT_RHO", base.rho),
-            tile=_env_int("DIFFVG_SPLAT_TILE", base.tile),
-            depth_policy=DepthPolicy(depth_policy),
-        )
     if name == "bezier_gsplat":
         base = BezierGsplatConfig()
         depth_mode = _env_str("DIFFVG_BEZIER_GSPLAT_DEPTH_MODE", base.depth_mode).lower()
@@ -146,9 +112,7 @@ __all__ = [
     "get_backend",
     "current_api",
     "list_backends",
-    "SplatConfig",
     "BezierGsplatConfig",
     "BackendConfig",
-    "DepthPolicy",
     "get_backend_config",
 ]

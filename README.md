@@ -1,16 +1,22 @@
 # diffvg
 
-Differentiable Rasterizer for Vector Graphics
-https://people.csail.mit.edu/tzumao/diffvg
+This repository is no longer maintained as a general differentiable SVG
+renderer. It is now a stroke-first raster-to-vector engine built around a
+compiled open-stroke runtime and the `bezier_gsplat` backend.
 
-diffvg is a differentiable rasterizer for 2D vector graphics. See the webpage for more info.
+Maintained product scope:
+- open stroke scenes only
+- constant RGBA stroke colors
+- scalar stroke widths
+- `bezier_gsplat` as the only supported runtime backend
+- painterly / precondition / line-art vectorization workflows
 
-![teaser](https://user-images.githubusercontent.com/951021/92184822-2a0bc500-ee20-11ea-81a6-f26af2d120f4.jpg)
+Legacy exact-renderer backends, fill-heavy demos, SDF demos, and old sample apps
+have been removed from the maintained path.
 
-![circle](https://user-images.githubusercontent.com/951021/63556018-0b2ddf80-c4f8-11e9-849c-b4ecfcb9a865.gif)
-![path](https://user-images.githubusercontent.com/951021/64070625-7a52b480-cc19-11e9-9380-eac02f56f693.gif)
-![gradient](https://user-images.githubusercontent.com/951021/64898668-da475300-d63c-11e9-917a-825b94be0710.gif)
-![ellipse_transform](https://user-images.githubusercontent.com/951021/67149013-06b54700-f25b-11e9-91eb-a61171c6d4a4.gif)
+See:
+- [`docs/stroke_first_reboot.md`](docs/stroke_first_reboot.md)
+- [`docs/plotter_workflow_context.md`](docs/plotter_workflow_context.md)
 
 ## Install
 
@@ -134,115 +140,80 @@ Optional sanitizers (host code only): `CMAKE_ARGS="-DDIFFVG_SANITIZE=ON -DCMAKE_
 
 # Run
 
-```
-cd apps
-```
+Activate the repository venv first:
 
-Optimizing a single circle to a target.
-
-```
-python single_circle.py
+```bash
+source .venv/bin/activate
 ```
 
-Finite difference comparison.
+## Painterly Rendering
 
-```
-finite_difference_comp.py [-h] [--size_scale SIZE_SCALE]
-                                [--clamping_factor CLAMPING_FACTOR]
-                                [--use_prefiltering USE_PREFILTERING]
-                                svg_file
-```
+Pure random-init stroke optimization is the default path:
 
-e.g.,
-
-```
-python finite_difference_comp.py imgs/tiger.svg
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/painterly_rendering.py \
+  apps/imgs/fallingwater.jpg \
+  --backend bezier_gsplat \
+  --num-paths 2048 \
+  --num-iter 256
 ```
 
-Interactive editor
+Preconditioned stroke initialization is explicit and opt-in:
 
-```
-python svg_brush.py
-
-### High-level optimization driver
-
-For quick experiments without writing a custom training loop, use the
-`SvgOptimizationDriver` helper that wraps the legacy `OptimizableSvg` API:
-
-```python
-import torch
-import pydiffvg
-
-pydiffvg.set_use_gpu(torch.cuda.is_available())
-
-settings = pydiffvg.SvgOptimizationSettings()
-driver = pydiffvg.SvgOptimizationDriver(
-    "apps/imgs/note_small.svg",
-    settings=settings,
-    optimize_background=False,
-    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-)
-
-target = torch.ones((driver.document.canvas[1], driver.document.canvas[0], 4), dtype=torch.float32)
-
-def mse_loss(image, iteration, drv):
-    return torch.nn.functional.mse_loss(image, target)
-
-history = driver.optimize(mse_loss, iterations=5)
-driver.save_svg("results/note_small_optimized.svg")
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/painterly_rendering.py \
+  apps/imgs/flower.jpg \
+  --backend bezier_gsplat \
+  --precondition \
+  --precond-mode teed \
+  --num-paths 2048 \
+  --num-iter 256
 ```
 
-See `scripts/test_optimize_driver.py` for a runnable smoke test.
+## Preconditioning Only
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/precondition_vectorize.py \
+  apps/imgs/flower.jpg \
+  --backend bezier_gsplat
 ```
 
-Painterly rendering
+## Line-Art Vectorization
 
-```
-painterly_rendering.py [-h] [--num-paths NUM_PATHS]
-                           [--max-width MAX_WIDTH] [--loss LOSS]
-                           [--num-iter NUM_ITER] [--use-blob]
-                           target
-```
-
-e.g.,
-
-```
-python painterly_rendering.py imgs/fallingwater.jpg --num-paths 2048 --max-width 4.0 --loss lpips
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/lineart_vectorize.py \
+  apps/imgs/flower.jpg \
+  --backend bezier_gsplat
 ```
 
-Use `--loss` to choose the objective (`mse`, `l1`, `lpips`, `msssim`, `dists`, `perceptual-balanced`). `--loss lpips` leverages PIQ’s LPIPS implementation; install with `pip install piq`. Inputs stay in [0,1] and are internally normalized to [-1,1] for PIQ. The legacy flag `--use_lpips_loss` still maps to LPIPS but is kept only for backward compatibility.
+## Benchmarks
 
-Image vectorization
+Painterly benchmark:
 
-```
-python refine_svg.py [-h] [--use_lpips_loss] [--num_iter NUM_ITER] svg target
-```
-
-e.g.,
-
-```
-python refine_svg.py imgs/flower.svg imgs/flower.jpg
-```
-
-Note: When `--use_lpips_loss` is provided, PIQ’s `LPIPS` is used. Install with `pip install piq` if it is missing.
-
-Seam carving
-
-```
-python seam_carving.py [-h] [--svg SVG] [--optim_steps OPTIM_STEPS]
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/bench_painterly_backends.py \
+  apps/imgs/flower.jpg \
+  --backends bezier_gsplat \
+  --path-counts 512,1024 \
+  --num-iter 64 \
+  --repeats 1
 ```
 
-e.g.,
+Renderer microbenchmark:
 
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/bench_renderer_micro.py \
+  --backends bezier_gsplat \
+  --path-counts 128,512,1024 \
+  --repeats 5 \
+  --warmup 2
 ```
-python seam_carving.py imgs/hokusai.svg
+
+## Minimal Runtime Smoke
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python apps/test_stroke_first_runtime.py
 ```
-
-Vector variational autoencoder & vector GAN:
-
-For the GAN models, see `apps/generative_models/train_gan.py`. Generate samples from a pretrained using `apps/generative_models/eval_gan.py`.
-
-For the VAE models, see `apps/generative_models/mnist_vae.py`.
 
 If you use diffvg in your academic work, please cite
 

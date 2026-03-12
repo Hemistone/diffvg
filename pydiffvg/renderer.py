@@ -1,8 +1,4 @@
-"""Renderer stub class to route rendering via the selected backend.
-
-This class is intentionally thin: it defers to the backend's RenderFunction
-and can later host lightweight caches once the splatting backend is added.
-"""
+"""Renderer wrapper for the maintained stroke-first backend."""
 
 from __future__ import annotations
 
@@ -16,9 +12,7 @@ from .device import get_device
 class Renderer:
     def __init__(self, backend: Optional[str] = None) -> None:
         self.backend = (backend or get_backend()).lower()
-        # Placeholder for future cache structures
         self._cache: dict[str, Any] = {}
-        # Snapshot backend-specific config (None for baseline)
         self.config = get_backend_config(self.backend)
         self._api = get_api(self.backend)
 

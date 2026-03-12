@@ -6,7 +6,7 @@ import torch
 
 from .backend import BezierGsplatConfig, get_backend_config
 from .openstroke import CompiledOpenStrokeScene, OpenStrokeUnsupported, compile_scene, render_compiled_scene
-from .render_pytorch import OutputType
+from .output import OutputType
 
 
 def serialize_scene(

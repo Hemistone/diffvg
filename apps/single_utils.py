@@ -15,7 +15,6 @@ if str(REPO_ROOT) not in sys.path:
 
 import pydiffvg
 from pydiffvg.backends.registry import get_api
-from pydiffvg import triton_splat as _triton
 
 Number = Union[int, float]
 
@@ -220,26 +219,6 @@ def log_run_configuration(
         backend_impl = "<unavailable>"
     backend_line = f"[config] backend: {backend} ({backend_impl})"
     suffix_parts = []
-    if backend == "splat":
-        impl_env = os.environ.get("DIFFVG_SPLAT_IMPL", "").strip().lower()
-        impl_name = "triton"
-        impl_mode = "auto"
-        if impl_env in {"python", "torch", "fallback"}:
-            impl_name = "python"
-            impl_mode = "forced"
-        elif impl_env == "triton":
-            impl_name = "triton"
-            impl_mode = "forced"
-        else:
-            if hasattr(_triton, "env_forces_python") and _triton.env_forces_python():
-                impl_name = "python"
-                impl_mode = "forced"
-            elif not (_triton.is_available() and getattr(device, "type", None) == "cuda"):
-                impl_name = "python"
-        suffix = f"impl={impl_name}"
-        if impl_mode != "auto":
-            suffix += f" ({impl_mode})"
-        suffix_parts.append(suffix)
     if getattr(device, "type", None):
         suffix_parts.append(f"device={device}")
     if suffix_parts:

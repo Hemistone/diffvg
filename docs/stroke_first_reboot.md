@@ -28,8 +28,8 @@ The maintained mainline path is now a stroke-first compiled renderer:
 - the internal hot path compiles supported scenes into a packed open-stroke IR
 - rendering is performed from this compiled representation with `gsplat`
 
-Legacy backends still exist in the repo for comparison, but they are no longer
-part of the maintained product path.
+The older `baseline` and `splat` backends have now been removed from the
+maintained tree. The repo no longer carries dual runtime paths.
 
 This narrowing is also compatible with downstream sketch workflows such as
 ControlSketch/SwiftSketch, whose current diffvg usage is stroke-only
@@ -72,15 +72,6 @@ remain intact.
 For `bezier_gsplat`, that tuple now starts with a compiled scene object rather
 than a legacy flat diffvg argument payload.
 
-## Legacy Backends
-
-`baseline` and `splat` are treated as legacy comparison paths.
-
-- They remain available only when `DIFFVG_ENABLE_LEGACY=1` is set.
-- Mainline defaults now point to `bezier_gsplat`.
-- Benchmark helpers automatically re-enable legacy backends when a comparison
-  run requests them.
-
 ## Current Implementation Scope
 
 Implemented in this phase:
@@ -90,16 +81,14 @@ Implemented in this phase:
 - global packed parameter banks for points, widths, and colors
 - batched cubic sampling via cached Bernstein bases
 - painterly/precondition/bench flows now default to the stroke-first backend
-- legacy backends gated behind `DIFFVG_ENABLE_LEGACY`
+- legacy backends and their runtime modules removed from the mainline tree
 - renderer-only microbenchmark harness in `apps/bench_renderer_micro.py`
 - one small runtime smoke check in `apps/test_stroke_first_runtime.py`
 
 Still intentionally deferred:
 
-- removal of old exact-renderer code from the tree
-- migration of every legacy sample app
+- cleanup of remaining historical docs that still mention removed backends
 - compiler/round-trip truth checks beyond smoke coverage
-- explicit tree cleanup for dead or now-redundant legacy modules
 - plotter-aware optimization objectives beyond hard palette/width constraints
 
 ## Benchmark Snapshot

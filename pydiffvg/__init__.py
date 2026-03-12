@@ -22,7 +22,7 @@ from .optimize import SvgOptimizationDriver, SvgParserMixin, SvgWriterMixin
 from .precondition import *  # noqa: F401,F403
 from .plotter import *  # noqa: F401,F403
 
-from .render_pytorch import RenderFunction, OutputType, set_print_timing
+from .render_function import RenderFunction, OutputType, set_print_timing
 from .image import imwrite
 from .parse_svg import svg_to_scene, parse_scene, parse_transform, parse_color
 from .save_svg import save_svg
@@ -34,9 +34,7 @@ from .backend import (
     get_backend,
     list_backends,
     get_backend_config,
-    SplatConfig,
     BezierGsplatConfig,
-    DepthPolicy,
 )
 from .renderer import Renderer
 
@@ -65,9 +63,7 @@ __all__ = (
         "get_backend",
         "list_backends",
         "get_backend_config",
-        "SplatConfig",
         "BezierGsplatConfig",
-        "DepthPolicy",
         "Renderer",
     ]
 )

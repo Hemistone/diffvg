@@ -132,20 +132,10 @@ def _filter_config_items(
 
 
 def _rgba_over_white(img_rgba: torch.Tensor) -> torch.Tensor:
-    """Composite RGBA to RGB over white.
-
-    Handles premultiplied vs straight-alpha differences between backends:
-    - baseline returns straight RGB (needs multiply by A)
-    - bezier_gsplat returns premultiplied RGB (do NOT multiply by A again)
-    """
-    backend = pydiffvg.get_backend()
+    """Composite premultiplied RGBA to RGB over white."""
     a = img_rgba[:, :, 3:4].clamp(0.0, 1.0)
     rgb = img_rgba[:, :, :3]
-    if backend == "bezier_gsplat":
-        premul = rgb  # RGB is already premultiplied in splat backend
-    else:
-        premul = rgb * a  # baseline provides straight (non-premultiplied) RGB
-    return (premul + (1.0 - a)).clamp(0.0, 1.0)
+    return (rgb + (1.0 - a)).clamp(0.0, 1.0)
 
 
 gamma = 1.0
@@ -350,14 +340,6 @@ def main(args):
             config_items["precond_flow_field_iters"] = getattr(args, "precond_flow_field_iters", None)
             config_items["precond_flow_coverage_decay"] = getattr(args, "precond_flow_coverage_decay", None)
             config_items["precond_flow_coverage_radius"] = getattr(args, "precond_flow_coverage_radius", None)
-    if pydiffvg.get_backend() == "splat":
-        raw_thresh = os.environ.get("DIFFVG_SPLAT_TILE_THRESH")
-        if raw_thresh is None or raw_thresh.strip() == "":
-            tile_thresh_display = "1e-4 (default)"
-        else:
-            tile_thresh_display = raw_thresh.strip()
-        config_items["splat_tile_thresh"] = tile_thresh_display
-
     log_run_configuration(
         "painterly_rendering",
         _filter_config_items(
@@ -608,8 +590,7 @@ def main(args):
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    default_config = "configs/precondition/teed_detail_quantile.toml"
-    parser.add_argument("--config", type=str, default=default_config, help="TOML config file for default arguments")
+    parser.add_argument("--config", type=str, default=None, help="Optional TOML config file for default arguments")
     parser.add_argument("--palette", type=str, default=None, help="Palette name or path (configs/palette/...)")
     parser.add_argument("target", help="target image path")
     parser.add_argument("--num-paths", dest="num_paths", type=int, default=512)

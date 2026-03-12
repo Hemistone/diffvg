@@ -281,7 +281,7 @@ def build_preconditioned_scene(
     image: str | Path | np.ndarray,
     cfg: PreconditionConfig | None = None,
     *,
-    backend: str = "splat",
+    backend: str = "bezier_gsplat",
     device: torch.device | None = None,
 ) -> PreconditionedScene:
     """Generate initial diffvg paths from a raster image."""
@@ -291,8 +291,7 @@ def build_preconditioned_scene(
     rgb = _load_image(image)
     height, width = rgb.shape[0], rgb.shape[1]
     _apply_width_mode(cfg, width, height)
-    if (backend or "").strip().lower() == "splat":
-        cfg.force_open_paths = True
+    cfg.force_open_paths = True
     # Auto-scale (up or down) to keep preconditioning path count in a stable range.
     if cfg.max_paths is None:
         cfg.max_paths = int(cfg.precondition_target_paths_max)

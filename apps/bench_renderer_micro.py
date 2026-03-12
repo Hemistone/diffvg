@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Renderer-only microbenchmark for stroke-first and legacy backends.
+"""Renderer-only microbenchmark for the stroke-first backend.
 
 Measures scene compilation, forward-only render, backward-only autograd, and
 one optimization step on synthetic open-stroke scenes. Each benchmark case runs
@@ -73,7 +73,7 @@ def _parse_backends(raw: str) -> list[str]:
     if not values:
         raise argparse.ArgumentTypeError("expected at least one backend")
     for value in values:
-        if value not in {"bezier_gsplat", "baseline", "splat"}:
+        if value != "bezier_gsplat":
             raise argparse.ArgumentTypeError(f"unsupported backend '{value}'")
     return values
 
@@ -159,44 +159,22 @@ def _make_trainable(shapes):
 
 
 def _time_backward(renderer, width: int, height: int, shapes, shape_groups, samples_x: int, samples_y: int, repeats: int, warmup: int, device: torch.device) -> float:
-    if renderer.backend == "bezier_gsplat":
-        scene_args = renderer.serialize_scene(
-            width,
-            height,
-            shapes,
-            shape_groups,
-            device=device,
-            cache_key=None,
-            invalidate_cache=True,
-        )
-        compiled_scene = scene_args[0]
-        compiled_scene.point_bank.requires_grad_(True)
-        params = [compiled_scene.point_bank]
-    else:
-        params = _make_trainable(shapes)
-        scene_args = renderer.serialize_scene(
-            width,
-            height,
-            shapes,
-            shape_groups,
-            device=device,
-            cache_key=None,
-            invalidate_cache=True,
-        )
+    scene_args = renderer.serialize_scene(
+        width,
+        height,
+        shapes,
+        shape_groups,
+        device=device,
+        cache_key=None,
+        invalidate_cache=True,
+    )
+    compiled_scene = scene_args[0]
+    compiled_scene.point_bank.requires_grad_(True)
+    params = [compiled_scene.point_bank]
     for _ in range(max(warmup, 1)):
         for param in params:
             if param.grad is not None:
                 param.grad.zero_()
-        if renderer.backend != "bezier_gsplat":
-            scene_args = renderer.serialize_scene(
-                width,
-                height,
-                shapes,
-                shape_groups,
-                device=device,
-                cache_key=None,
-                invalidate_cache=True,
-            )
         img = renderer.apply(width, height, samples_x, samples_y, 0, None, *scene_args)
         img[..., :3].mean().backward()
     _sync_if_needed()
@@ -205,16 +183,6 @@ def _time_backward(renderer, width: int, height: int, shapes, shape_groups, samp
         for param in params:
             if param.grad is not None:
                 param.grad.zero_()
-        if renderer.backend != "bezier_gsplat":
-            scene_args = renderer.serialize_scene(
-                width,
-                height,
-                shapes,
-                shape_groups,
-                device=device,
-                cache_key=None,
-                invalidate_cache=True,
-            )
         img = renderer.apply(width, height, samples_x, samples_y, 0, None, *scene_args)
         img[..., :3].mean().backward()
     _sync_if_needed()
@@ -222,43 +190,21 @@ def _time_backward(renderer, width: int, height: int, shapes, shape_groups, samp
 
 
 def _time_step(renderer, width: int, height: int, shapes, shape_groups, samples_x: int, samples_y: int, repeats: int, warmup: int, device: torch.device) -> float:
-    if renderer.backend == "bezier_gsplat":
-        scene_args = renderer.serialize_scene(
-            width,
-            height,
-            shapes,
-            shape_groups,
-            device=device,
-            cache_key=None,
-            invalidate_cache=True,
-        )
-        compiled_scene = scene_args[0]
-        compiled_scene.point_bank.requires_grad_(True)
-        params = [compiled_scene.point_bank]
-    else:
-        params = _make_trainable(shapes)
-        scene_args = renderer.serialize_scene(
-            width,
-            height,
-            shapes,
-            shape_groups,
-            device=device,
-            cache_key=None,
-            invalidate_cache=True,
-        )
+    scene_args = renderer.serialize_scene(
+        width,
+        height,
+        shapes,
+        shape_groups,
+        device=device,
+        cache_key=None,
+        invalidate_cache=True,
+    )
+    compiled_scene = scene_args[0]
+    compiled_scene.point_bank.requires_grad_(True)
+    params = [compiled_scene.point_bank]
     optim = torch.optim.Adam(params, lr=1e-1)
     for _ in range(max(warmup, 1)):
         optim.zero_grad(set_to_none=True)
-        if renderer.backend != "bezier_gsplat":
-            scene_args = renderer.serialize_scene(
-                width,
-                height,
-                shapes,
-                shape_groups,
-                device=device,
-                cache_key=None,
-                invalidate_cache=True,
-            )
         img = renderer.apply(width, height, samples_x, samples_y, 0, None, *scene_args)
         img[..., :3].mean().backward()
         optim.step()
@@ -266,16 +212,6 @@ def _time_step(renderer, width: int, height: int, shapes, shape_groups, samples_
     start = time.perf_counter()
     for _ in range(repeats):
         optim.zero_grad(set_to_none=True)
-        if renderer.backend != "bezier_gsplat":
-            scene_args = renderer.serialize_scene(
-                width,
-                height,
-                shapes,
-                shape_groups,
-                device=device,
-                cache_key=None,
-                invalidate_cache=True,
-            )
         img = renderer.apply(width, height, samples_x, samples_y, 0, None, *scene_args)
         img[..., :3].mean().backward()
         optim.step()
@@ -287,8 +223,6 @@ def _run_worker(args: argparse.Namespace) -> BenchRow:
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     os.environ["PYTHONPATH"] = str(REPO_ROOT)
     os.environ["DIFFVG_DEVICE"] = args.device
-    if args.worker_backend in {"baseline", "splat"}:
-        os.environ["DIFFVG_ENABLE_LEGACY"] = "1"
 
     import pydiffvg as d
 
@@ -382,8 +316,6 @@ def _spawn_worker(args: argparse.Namespace, backend: str, path_count: int, repor
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["DIFFVG_DEVICE"] = args.device
-    if backend in {"baseline", "splat"}:
-        env["DIFFVG_ENABLE_LEGACY"] = "1"
     proc = subprocess.run(cmd, cwd=REPO_ROOT, env=env, text=True, capture_output=True)
     stdout_path.write_text(proc.stdout, encoding="utf-8")
     stderr_path.write_text(proc.stderr, encoding="utf-8")
@@ -405,7 +337,7 @@ def _parse_args() -> argparse.Namespace:
         "--backends",
         type=_parse_backends,
         default=["bezier_gsplat"],
-        help="comma-separated backends to benchmark (baseline/splat are legacy comparison paths)",
+        help="comma-separated backends to benchmark",
     )
     parser.add_argument("--path-counts", type=_parse_csv_ints, default=[128, 512, 1024])
     parser.add_argument("--width", type=int, default=512)
