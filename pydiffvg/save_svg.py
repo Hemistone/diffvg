@@ -24,14 +24,31 @@ def prettify(elem) -> str:
 
 def _format_rgb(color: torch.Tensor) -> str:
     rgba = color.detach().to(device="cpu", dtype=torch.float32).reshape(4)
+    if not torch.isfinite(rgba).all():
+        raise ValueError("save_svg only supports finite RGBA stroke colors")
+    rgba = rgba.clamp(0.0, 1.0)
     return f"rgb({int(255 * rgba[0])}, {int(255 * rgba[1])}, {int(255 * rgba[2])})"
+
+
+def _finite_scalar(value: torch.Tensor, *, what: str) -> float:
+    scalar = value.detach().to(device="cpu", dtype=torch.float32).reshape(())
+    if not torch.isfinite(scalar):
+        raise ValueError(f"save_svg only supports finite {what}")
+    return float(scalar.item())
+
+
+def _finite_points(points: torch.Tensor, *, what: str) -> torch.Tensor:
+    data = points.detach().to(device="cpu", dtype=torch.float32)
+    if not torch.isfinite(data).all():
+        raise ValueError(f"save_svg only supports finite {what}")
+    return data
 
 
 def _path_d(shape: object) -> str:
     if isinstance(shape, pydiffvg.Polygon):
         if bool(shape.is_closed):
             raise ValueError("save_svg only supports open polygons")
-        points = shape.points.detach().to(device="cpu", dtype=torch.float32)
+        points = _finite_points(shape.points, what="polygon points")
         if points.shape[0] < 2:
             raise ValueError("open polygon must contain at least two points")
         path_str = f"M {points[0, 0].item()} {points[0, 1].item()}"
@@ -46,7 +63,7 @@ def _path_d(shape: object) -> str:
 
     num_segments = int(shape.num_control_points.shape[0])
     num_control_points = shape.num_control_points.detach().to(device="cpu", dtype=torch.int64).tolist()
-    points = shape.points.detach().to(device="cpu", dtype=torch.float32)
+    points = _finite_points(shape.points, what="path points")
     if points.shape[0] == 0:
         raise ValueError("open path must contain at least one point")
     num_points = int(points.shape[0])
@@ -128,13 +145,18 @@ def save_svg(
         stroke_width = getattr(shape, "stroke_width", None)
         if not isinstance(stroke_width, torch.Tensor) or stroke_width.numel() != 1:
             raise ValueError("save_svg only supports scalar stroke widths")
+        stroke_width_value = _finite_scalar(stroke_width, what="stroke widths")
+        if stroke_width_value < 0.0:
+            raise ValueError("save_svg only supports non-negative stroke widths")
+        stroke_alpha = _finite_scalar(stroke_color.reshape(4)[3], what="stroke alpha")
+        stroke_alpha = min(max(stroke_alpha, 0.0), 1.0)
 
         shape_node = etree.SubElement(g, "path")
         shape_node.set("d", _path_d(shape))
         shape_node.set("fill", "none")
         shape_node.set("stroke", _format_rgb(stroke_color))
-        shape_node.set("stroke-opacity", str(float(stroke_color.detach().reshape(4)[3].item())))
-        shape_node.set("stroke-width", str(2.0 * float(stroke_width.detach().reshape(()).item())))
+        shape_node.set("stroke-opacity", str(stroke_alpha))
+        shape_node.set("stroke-width", str(2.0 * stroke_width_value))
         shape_node.set("stroke-linecap", "round")
         shape_node.set("stroke-linejoin", "round")
         shape_node.set("id", f"shape_{group_index}")

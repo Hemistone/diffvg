@@ -26,6 +26,7 @@ from .render_function import RenderFunction, OutputType, set_print_timing
 from .image import imwrite
 from .parse_svg import svg_to_scene, parse_scene, parse_transform, parse_color
 from .save_svg import save_svg
+from .svg_preview import render_svg_preview
 from .serialization import serialize_scene
 
 # Backend selection API (minimal)
@@ -58,6 +59,7 @@ __all__ = (
         "parse_transform",
         "parse_color",
         "save_svg",
+        "render_svg_preview",
         "serialize_scene",
         "set_backend",
         "get_backend",

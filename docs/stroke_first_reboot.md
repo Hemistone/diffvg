@@ -31,6 +31,15 @@ The maintained mainline path is now a stroke-first compiled renderer:
 The older `baseline` and `splat` backends have now been removed from the
 maintained tree. The repo no longer carries dual runtime paths.
 
+Saved artifacts are now interpreted asymmetrically:
+
+- `final_splatted.png`: direct renderer output used for internal debugging
+- `final.svg`: canonical vector output
+- `final.png`: preview rasterized back from `final.svg`
+
+This makes SVG export fidelity part of the mainline product path rather than a
+secondary debugging aid.
+
 This narrowing is also compatible with downstream sketch workflows such as
 ControlSketch/SwiftSketch, whose current diffvg usage is stroke-only
 (`fill_color=None`, open `Path`, constant `stroke_color`).

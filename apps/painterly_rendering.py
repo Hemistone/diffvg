@@ -570,19 +570,27 @@ def main(args):
     finally:
         progress.close()
 
-    # Render the final result.
+    # Save the final direct splat render for debugging/comparison, but treat it
+    # as an intermediate artifact. The canonical user-facing output is final.svg
+    # plus the preview rasterized back from that SVG.
     img = _render(0)
     final_rgb = _rgba_over_white(img)
-    pydiffvg.imwrite(final_rgb.cpu(), str(run.results_dir / "final.png"), gamma=gamma)
-    # Always emit the final SVG so downstream plotter tooling can inspect the
-    # optimized vector output even when intermediate SVG checkpoints are off.
+    final_splatted_path = run.results_dir / "final_splatted.png"
+    final_svg_path = run.results_dir / "final.svg"
+    final_png_path = run.results_dir / "final.png"
+    pydiffvg.imwrite(final_rgb.cpu(), str(final_splatted_path), gamma=gamma)
     pydiffvg.save_svg(
-        str(run.results_dir / "final.svg"),
+        str(final_svg_path),
         canvas_width,
         canvas_height,
         shapes,
         shape_groups,
         use_gamma=False,
+        background_rgb=(1.0, 1.0, 1.0),
+    )
+    pydiffvg.render_svg_preview(
+        final_svg_path,
+        final_png_path,
         background_rgb=(1.0, 1.0, 1.0),
     )
 

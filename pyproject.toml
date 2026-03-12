@@ -17,7 +17,8 @@ keywords = ["graphics", "differentiable", "vector", "rasterizer", "pytorch"]
 dependencies = [
   "svgpathtools>=1.4",
   "cssutils>=2.2.0",
-  "matplotlib>=3.0"
+  "matplotlib>=3.0",
+  "cairosvg>=2.8"
 ]
 
 [project.urls]

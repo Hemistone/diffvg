@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Small smoke test for the maintained stroke-first runtime.
 
-Checks three invariants only:
+Checks four invariants only:
 - frontend path tensors are rebound to the compiled point bank
 - bezier_gsplat renders a finite RGBA image for a supported open-stroke scene
 - save_svg/svg_to_scene round-trip preserves a supported stroke-only scene
+- saved SVG can be rasterized back into a PNG preview
 """
 
 from __future__ import annotations
@@ -121,6 +122,9 @@ def main() -> None:
         rt_image = renderer.apply(rt_width, rt_height, 2, 2, 0, None, *rt_args)
         assert tuple(rt_image.shape) == (rt_height, rt_width, 4)
         assert torch.isfinite(rt_image).all().item(), "round-trip render produced non-finite values"
+        preview_path = Path(tmpdir) / "preview.png"
+        pydiffvg.render_svg_preview(svg_path, preview_path, background_rgb=(1.0, 1.0, 1.0))
+        assert preview_path.is_file(), "render_svg_preview did not create output"
 
     print("stroke-first runtime smoke: ok")
 

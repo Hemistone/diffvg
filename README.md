@@ -11,6 +11,11 @@ Maintained product scope:
 - `bezier_gsplat` as the only supported runtime backend
 - painterly / precondition / line-art vectorization workflows
 
+Final painterly artifacts now follow this convention:
+- `final_splatted.png`: direct internal `bezier_gsplat` raster
+- `final.svg`: canonical vector output
+- `final.png`: preview rasterized back from `final.svg` on a white background
+
 Legacy exact-renderer backends, fill-heavy demos, SDF demos, and old sample apps
 have been removed from the maintained path.
 
