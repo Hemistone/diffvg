@@ -6,7 +6,7 @@ import torch
 
 from ..device import get_device
 from ..shape import Path, Polygon
-from .compiled import CompiledOpenStrokeScene, OpenStrokeUnsupported, StrokeStyleRef
+from .compiled import CompiledOpenStrokeScene, OpenStrokeUnsupported, ShapeRef, StyleRef
 
 
 class _OutputTypeCompat:
@@ -26,13 +26,14 @@ def _is_identity_transform(transform: torch.Tensor) -> bool:
     return bool(torch.allclose(transform, identity, atol=1e-6, rtol=0.0))
 
 
-def _stroke_rgba(group) -> None:
+def _validate_stroke_rgba(group) -> torch.Tensor:
     color = getattr(group, "stroke_color", None)
     if not isinstance(color, torch.Tensor) or color.numel() != 4:
         raise OpenStrokeUnsupported("only constant RGBA stroke colors are supported")
+    return color.reshape(4)
 
 
-def _path_point_refs(shape) -> torch.Tensor:
+def _path_points(shape) -> torch.Tensor:
     if not isinstance(shape.points, torch.Tensor) or shape.points.ndim != 2 or shape.points.shape[1] != 2:
         raise OpenStrokeUnsupported("path points must be a finite Nx2 tensor")
     if not torch.isfinite(shape.points).all():
@@ -40,10 +41,11 @@ def _path_point_refs(shape) -> torch.Tensor:
     return shape.points
 
 
-def _scalar_width(shape) -> None:
+def _scalar_width(shape) -> torch.Tensor:
     width = getattr(shape, "stroke_width", None)
     if not isinstance(width, torch.Tensor) or width.numel() != 1:
         raise OpenStrokeUnsupported("only scalar stroke widths are supported")
+    return width.reshape(())
 
 
 _LINE_TO_CUBIC = torch.tensor(
@@ -132,8 +134,11 @@ def compile_scene(
     if eval_positions.numel() != 0:
         raise OpenStrokeUnsupported("SDF/eval_positions is not supported")
 
-    point_refs: List[torch.Tensor] = []
-    style_refs: List[StrokeStyleRef] = []
+    point_chunks: List[torch.Tensor] = []
+    shape_refs: List[ShapeRef] = []
+    style_refs: List[StyleRef] = []
+    width_values: List[torch.Tensor] = []
+    color_values: List[torch.Tensor] = []
     control_source_indices: List[torch.Tensor] = []
     control_source_weights: List[torch.Tensor] = []
     segment_masks: List[torch.Tensor] = []
@@ -147,23 +152,31 @@ def compile_scene(
             raise OpenStrokeUnsupported("filled shapes are not supported")
         if not _is_identity_transform(group.shape_to_canvas):
             raise OpenStrokeUnsupported("shape_to_canvas transforms are not supported")
-        _stroke_rgba(group)
+        if int(group.shape_ids.numel()) != 1:
+            raise OpenStrokeUnsupported("stroke-first renderer expects one shape per ShapeGroup")
+        stroke_rgba = _validate_stroke_rgba(group)
 
         for shape_id in group.shape_ids.detach().to(dtype=torch.int64, device="cpu").tolist():
             shape = shapes[shape_id]
             if not isinstance(shape, (Path, Polygon)):
                 raise OpenStrokeUnsupported("only open Path/Polygon shapes are supported")
-            points = _path_point_refs(shape)
-            _scalar_width(shape)
+            points = _path_points(shape)
+            stroke_width = _scalar_width(shape)
+            point_tensor = points.detach().clone().to(device=target_device, dtype=torch.float32).contiguous()
+            start = point_offset
+            end = start + int(point_tensor.shape[0])
+            point_chunks.append(point_tensor)
             style_index = len(style_refs)
-            style_refs.append(StrokeStyleRef(shape=shape, group=group))
-            point_refs.append(points)
+            shape_refs.append(ShapeRef(shape=shape, start=start, end=end, index=style_index))
+            style_refs.append(StyleRef(group=group, index=style_index))
+            width_values.append(stroke_width.detach().clone().to(device=target_device, dtype=torch.float32).reshape(()))
+            color_values.append(stroke_rgba.detach().clone().to(device=target_device, dtype=torch.float32).reshape(4))
             segments = _segment_descriptors(shape, point_offset)
-            point_offset += int(points.shape[0])
+            point_offset = end
             if not segments:
                 continue
-            for start in range(0, len(segments), 3):
-                chunk = segments[start:start + 3]
+            for start_index in range(0, len(segments), 3):
+                chunk = segments[start_index:start_index + 3]
                 chunk_indices = torch.zeros((3, 4), dtype=torch.int64, device=target_device)
                 chunk_weights = torch.zeros((3, 4, 4), dtype=torch.float32, device=target_device)
                 chunk_mask = torch.zeros(3, dtype=torch.bool, device=target_device)
@@ -181,13 +194,20 @@ def compile_scene(
     if not control_source_indices:
         raise OpenStrokeUnsupported("scene does not contain supported open-stroke paths")
 
-    return CompiledOpenStrokeScene(
+    point_bank = torch.cat(point_chunks, dim=0).contiguous()
+    stroke_width_bank = torch.stack(width_values, dim=0).contiguous()
+    stroke_rgba_bank = torch.stack(color_values, dim=0).contiguous()
+
+    compiled = CompiledOpenStrokeScene(
         canvas_width=int(canvas_width),
         canvas_height=int(canvas_height),
         output_type=output_type,
         use_prefiltering=use_prefiltering,
         eval_positions=eval_positions.to(device=target_device),
-        point_refs=tuple(point_refs),
+        point_bank=point_bank,
+        stroke_width_bank=stroke_width_bank,
+        stroke_rgba_bank=stroke_rgba_bank,
+        shape_refs=tuple(shape_refs),
         style_refs=tuple(style_refs),
         control_source_indices=torch.stack(control_source_indices, dim=0).contiguous(),
         control_source_weights=torch.stack(control_source_weights, dim=0).contiguous(),
@@ -195,3 +215,5 @@ def compile_scene(
         style_index=torch.tensor(style_indices, dtype=torch.int64, device=target_device).contiguous(),
         chunk_order=torch.tensor(chunk_orders, dtype=torch.int64, device=target_device).contiguous(),
     )
+    compiled.bind_frontend_views()
+    return compiled

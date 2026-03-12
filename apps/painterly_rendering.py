@@ -378,6 +378,8 @@ def main(args):
     torch.manual_seed(1234)
 
     renderer = pydiffvg.Renderer(backend=backend)
+    if backend == "bezier_gsplat" and args.use_blob:
+        raise ValueError("bezier_gsplat only supports stroke-first scenes; --use-blob is not supported")
     shapes = []
     shape_groups = []
 
@@ -526,23 +528,35 @@ def main(args):
     points_vars = []
     stroke_width_vars = []
     color_vars = []
-    for path in shapes:
-        path.points.requires_grad = True
-        points_vars.append(path.points)
-    if not args.use_blob and palette is None:
-        for path in shapes:
-            path.stroke_width.requires_grad = True
-            stroke_width_vars.append(path.stroke_width)
-    if args.use_blob:
-        for group in shape_groups:
-            group.fill_color.requires_grad = True
-            color_vars.append(group.fill_color)
-    else:
+    compiled_scene = scene_args_cache[0][0] if persistent_scene and scene_args_cache[0] is not None else None
+    if persistent_scene:
+        if compiled_scene is None:
+            raise RuntimeError("bezier_gsplat expected a compiled scene cache after initial render")
+        compiled_scene.point_bank.requires_grad_(True)
+        points_vars.extend(compiled_scene.point_parameters())
         if palette is None:
+            compiled_scene.stroke_width_bank.requires_grad_(True)
+            stroke_width_vars.extend(compiled_scene.width_parameters())
+            compiled_scene.stroke_rgba_bank.requires_grad_(True)
+            color_vars.extend(compiled_scene.color_parameters())
+    else:
+        for path in shapes:
+            path.points.requires_grad = True
+            points_vars.append(path.points)
+        if not args.use_blob and palette is None:
+            for path in shapes:
+                path.stroke_width.requires_grad = True
+                stroke_width_vars.append(path.stroke_width)
+        if args.use_blob:
             for group in shape_groups:
-                group.stroke_color.requires_grad = True
-                color_vars.append(group.stroke_color)
-    
+                group.fill_color.requires_grad = True
+                color_vars.append(group.fill_color)
+        else:
+            if palette is None:
+                for group in shape_groups:
+                    group.stroke_color.requires_grad = True
+                    color_vars.append(group.stroke_color)
+
     # Optimize
     points_optim = torch.optim.Adam(points_vars, lr=1.0)
     width_optim = torch.optim.Adam(stroke_width_vars, lr=0.1) if stroke_width_vars else None
@@ -576,15 +590,21 @@ def main(args):
             if color_optim is not None:
                 color_optim.step()
             if width_optim is not None:
-                for path in shapes:
-                    path.stroke_width.data.clamp_(1.0, max_width)
+                if persistent_scene and compiled_scene is not None:
+                    compiled_scene.stroke_width_bank.data.clamp_(1.0, max_width)
+                else:
+                    for path in shapes:
+                        path.stroke_width.data.clamp_(1.0, max_width)
             if args.use_blob:
                 for group in shape_groups:
                     group.fill_color.data.clamp_(0.0, 1.0)
             else:
                 if palette is None:
-                    for group in shape_groups:
-                        group.stroke_color.data.clamp_(0.0, 1.0)
+                    if persistent_scene and compiled_scene is not None:
+                        compiled_scene.stroke_rgba_bank.data.clamp_(0.0, 1.0)
+                    else:
+                        for group in shape_groups:
+                            group.stroke_color.data.clamp_(0.0, 1.0)
 
             svg_every = getattr(args, "save_svg_every", 0)
             if (svg_every and svg_every > 0 and (t % svg_every == 0)) or (t == args.num_iter - 1 and svg_every and svg_every > 0):

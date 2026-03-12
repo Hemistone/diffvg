@@ -76,20 +76,6 @@ def _normalize_means_to_ndc(means_px: torch.Tensor, width: int, height: int) -> 
     return means_px * scale + bias
 
 
-def _style_tensors(scene: CompiledOpenStrokeScene, device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
-    widths = torch.stack([
-        ref.shape.stroke_width.to(device=device, dtype=dtype).reshape(()) for ref in scene.style_refs
-    ])
-    colors = torch.stack([
-        ref.group.stroke_color.to(device=device, dtype=dtype).reshape(4) for ref in scene.style_refs
-    ])
-    return widths, colors
-
-
-def _flat_points(scene: CompiledOpenStrokeScene, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    return torch.cat([points.to(device=device, dtype=dtype) for points in scene.point_refs], dim=0).contiguous()
-
-
 def render_compiled_scene(
     scene: CompiledOpenStrokeScene,
     *,
@@ -107,8 +93,9 @@ def render_compiled_scene(
         raise OpenStrokeUnsupported("compiled scene size does not match render request")
 
     dtype = torch.float32
-    flat_points = _flat_points(scene, device, dtype)
-    widths, colors = _style_tensors(scene, device, dtype)
+    flat_points = scene.point_bank.to(device=device, dtype=dtype)
+    widths = scene.stroke_width_bank.to(device=device, dtype=dtype)
+    colors = scene.stroke_rgba_bank.to(device=device, dtype=dtype)
 
     source_idx = scene.control_source_indices.view(-1)
     source_points = flat_points.index_select(0, source_idx).view(-1, scene.max_segments, 4, 2)
@@ -161,9 +148,6 @@ def render_compiled_scene(
 
     if means.numel() == 0:
         raise OpenStrokeUnsupported("compiled scene produced zero active Gaussian samples")
-
-    if config.depth_mode != "scene_order":
-        raise OpenStrokeUnsupported(f"unsupported depth mode '{config.depth_mode}'")
 
     depth_per_chunk = 1.0 - (scene.chunk_order.to(device=device, dtype=dtype) / float(max(scene.stroke_count, 1)))
     depth = depth_per_chunk[:, None].expand(scene.stroke_count, sample_mask.shape[1]).reshape(-1, 1)[active]

@@ -159,16 +159,30 @@ def _make_trainable(shapes):
 
 
 def _time_backward(renderer, width: int, height: int, shapes, shape_groups, samples_x: int, samples_y: int, repeats: int, warmup: int, device: torch.device) -> float:
-    params = _make_trainable(shapes)
-    scene_args = renderer.serialize_scene(
-        width,
-        height,
-        shapes,
-        shape_groups,
-        device=device,
-        cache_key=None,
-        invalidate_cache=True,
-    )
+    if renderer.backend == "bezier_gsplat":
+        scene_args = renderer.serialize_scene(
+            width,
+            height,
+            shapes,
+            shape_groups,
+            device=device,
+            cache_key=None,
+            invalidate_cache=True,
+        )
+        compiled_scene = scene_args[0]
+        compiled_scene.point_bank.requires_grad_(True)
+        params = [compiled_scene.point_bank]
+    else:
+        params = _make_trainable(shapes)
+        scene_args = renderer.serialize_scene(
+            width,
+            height,
+            shapes,
+            shape_groups,
+            device=device,
+            cache_key=None,
+            invalidate_cache=True,
+        )
     for _ in range(max(warmup, 1)):
         for param in params:
             if param.grad is not None:
@@ -208,17 +222,31 @@ def _time_backward(renderer, width: int, height: int, shapes, shape_groups, samp
 
 
 def _time_step(renderer, width: int, height: int, shapes, shape_groups, samples_x: int, samples_y: int, repeats: int, warmup: int, device: torch.device) -> float:
-    params = _make_trainable(shapes)
+    if renderer.backend == "bezier_gsplat":
+        scene_args = renderer.serialize_scene(
+            width,
+            height,
+            shapes,
+            shape_groups,
+            device=device,
+            cache_key=None,
+            invalidate_cache=True,
+        )
+        compiled_scene = scene_args[0]
+        compiled_scene.point_bank.requires_grad_(True)
+        params = [compiled_scene.point_bank]
+    else:
+        params = _make_trainable(shapes)
+        scene_args = renderer.serialize_scene(
+            width,
+            height,
+            shapes,
+            shape_groups,
+            device=device,
+            cache_key=None,
+            invalidate_cache=True,
+        )
     optim = torch.optim.Adam(params, lr=1e-1)
-    scene_args = renderer.serialize_scene(
-        width,
-        height,
-        shapes,
-        shape_groups,
-        device=device,
-        cache_key=None,
-        invalidate_cache=True,
-    )
     for _ in range(max(warmup, 1)):
         optim.zero_grad(set_to_none=True)
         if renderer.backend != "bezier_gsplat":

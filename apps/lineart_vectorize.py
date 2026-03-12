@@ -77,18 +77,6 @@ def main() -> None:
     pydiffvg.imwrite(scene.skeleton.astype(np.float32), str(out_dir / "skeleton.png"), gamma=1.0)
 
     if args.refine_iters > 0:
-        params = []
-        for path in scene.shapes:
-            path.points.requires_grad_(True)
-            params.append(path.points)
-            path.stroke_width.requires_grad_(True)
-            params.append(path.stroke_width)
-        for group in scene.shape_groups:
-            if getattr(group, "stroke_color", None) is not None:
-                group.stroke_color.requires_grad_(True)
-                params.append(group.stroke_color)
-        opt = torch.optim.Adam(params, lr=1e-1)
-        target = torch.tensor(np.concatenate([rgb, np.ones((rgb.shape[0], rgb.shape[1], 1), dtype=np.float32)], axis=2), device=device)
         persistent_scene = args.backend == "bezier_gsplat"
         scene_args = renderer.serialize_scene(
             scene.width,
@@ -99,6 +87,30 @@ def main() -> None:
             cache_key="main",
             invalidate_cache=True,
         )
+        params = []
+        if persistent_scene:
+            compiled_scene = scene_args[0]
+            compiled_scene.point_bank.requires_grad_(True)
+            params.append(compiled_scene.point_bank)
+            if args.palette is None:
+                compiled_scene.stroke_width_bank.requires_grad_(True)
+                compiled_scene.stroke_rgba_bank.requires_grad_(True)
+                params.append(compiled_scene.stroke_width_bank)
+                params.append(compiled_scene.stroke_rgba_bank)
+        else:
+            for path in scene.shapes:
+                path.points.requires_grad_(True)
+                params.append(path.points)
+                if args.palette is None:
+                    path.stroke_width.requires_grad_(True)
+                    params.append(path.stroke_width)
+            if args.palette is None:
+                for group in scene.shape_groups:
+                    if getattr(group, "stroke_color", None) is not None:
+                        group.stroke_color.requires_grad_(True)
+                        params.append(group.stroke_color)
+        opt = torch.optim.Adam(params, lr=1e-1)
+        target = torch.tensor(np.concatenate([rgb, np.ones((rgb.shape[0], rgb.shape[1], 1), dtype=np.float32)], axis=2), device=device)
         for t in range(args.refine_iters):
             opt.zero_grad()
             if not persistent_scene:
@@ -115,6 +127,9 @@ def main() -> None:
             loss = ((img[..., :3] - target[..., :3]) ** 2).mean()
             loss.backward()
             opt.step()
+            if persistent_scene and args.palette is None:
+                compiled_scene.stroke_width_bank.data.clamp_(1.0, 32.0)
+                compiled_scene.stroke_rgba_bank.data.clamp_(0.0, 1.0)
             if t % max(1, args.refine_iters // 10) == 0 or t == args.refine_iters - 1:
                 print(f"[{t}/{args.refine_iters}] refine loss={loss.item():.5f}")
         refined = renderer.apply(scene.width, scene.height, 2, 2, 0, None, *scene_args)
