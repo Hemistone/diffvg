@@ -4,7 +4,6 @@ Fallingwater: python painterly_rendering.py imgs/fallingwater.jpg --num-paths 20
 Fallingwater LPIPS: python painterly_rendering.py imgs/fallingwater.jpg --num-paths 2048 --max-width 4.0 --loss lpips
 Baboon: python painterly_rendering.py imgs/baboon.png --num-paths 1024 --max-width 4.0 --num-iter 250
 Baboon perceptual: python painterly_rendering.py imgs/baboon.png --num-paths 1024 --max-width 4.0 --num-iter 500 --loss perceptual-balanced
-Kitty: python painterly_rendering.py imgs/kitty.jpg --num-paths 1024 --use-blob
 """
 import argparse
 import math
@@ -157,9 +156,6 @@ def main(args):
     pydiffvg.set_backend(backend)
     use_gpu = pydiffvg.get_device().type == "cuda"
     pydiffvg.set_use_gpu(use_gpu)
-    if backend == "bezier_gsplat" and getattr(args, "use_blob", False):
-        raise ValueError("The stroke-first bezier_gsplat backend does not support --use-blob.")
-
     precondition = bool(getattr(args, "precondition", False))
     precond_mode = (getattr(args, "precond_mode", "xdog") or "xdog").strip().lower()
     if precondition and precond_mode not in ("xdog", "teed", "lineart", "flowline"):
@@ -253,15 +249,14 @@ def main(args):
         result = "".join(sanitized).strip("_")
         return result or "target"
 
-    run_label = f"{_sanitize_component(target_path.stem)}_paths{num_paths}_"
-    run_label += "blob" if args.use_blob else "strokes"
+    run_label = f"{_sanitize_component(target_path.stem)}_paths{num_paths}_strokes"
     if precondition:
         if precond_mode == "lineart":
             run_label += "_precondition_lineart"
         else:
             run_label += f"_precondition_{precond_mode}"
 
-    mode_dir = "blob" if args.use_blob else ("strokes_precondition" if precondition else "strokes")
+    mode_dir = "strokes_precondition" if precondition else "strokes"
     image_dir = _sanitize_component(target_path.stem)
     variant_parts = [backend, loss_name]
     if precondition:
@@ -294,7 +289,6 @@ def main(args):
         "iterations": args.num_iter,
         "max_width": max_width,
         "loss": loss_name,
-        "blob_mode": args.use_blob,
         "run_dir": run.results_dir,
     }
     teed_mode = False
@@ -378,14 +372,10 @@ def main(args):
     torch.manual_seed(1234)
 
     renderer = pydiffvg.Renderer(backend=backend)
-    if backend == "bezier_gsplat" and args.use_blob:
-        raise ValueError("bezier_gsplat only supports stroke-first scenes; --use-blob is not supported")
     shapes = []
     shape_groups = []
 
     if getattr(args, "precondition", False):
-        if args.use_blob:
-            raise ValueError("Preconditioning is incompatible with --use-blob (preconditioning generates stroke paths).")
         cfg = build_precondition_config(
             args,
             default_teed_weights_path=_default_teed_weights_path(),
@@ -424,10 +414,7 @@ def main(args):
         pydiffvg.imwrite(pre.skeleton.astype(np.float32), str(run.results_dir / "precond_skeleton.png"), gamma=1.0)
     else:
         for i in range(num_paths):
-            if args.use_blob:
-                num_segments = random.randint(3, 5)
-            else:
-                num_segments = random.randint(1, 3)
+            num_segments = random.randint(1, 3)
             num_control_points = torch.zeros(num_segments, dtype=torch.int32, device=device) + 2
             points = []
             p0 = (random.random(), random.random())
@@ -439,13 +426,8 @@ def main(args):
                 p3 = (p2[0] + radius * (random.random() - 0.5), p2[1] + radius * (random.random() - 0.5))
                 points.append(p1)
                 points.append(p2)
-                if args.use_blob:
-                    if j < num_segments - 1:
-                        points.append(p3)
-                        p0 = p3
-                else:
-                    points.append(p3)
-                    p0 = p3
+                points.append(p3)
+                p0 = p3
             points = torch.tensor(points, device=device)
             points[:, 0] *= canvas_width
             points[:, 1] *= canvas_height
@@ -453,35 +435,26 @@ def main(args):
                 num_control_points=num_control_points,
                 points=points,
                 stroke_width=torch.tensor(1.0, device=device),
-                is_closed=args.use_blob,
+                is_closed=False,
             )
-            if palette is not None and not args.use_blob:
+            if palette is not None:
                 entry, entry_width, _ = palette.entry_for_index(i, canvas_width, canvas_height)
                 path.stroke_width = torch.tensor(entry_width, device=device)
             shapes.append(path)
-            if args.use_blob:
-                path_group = pydiffvg.ShapeGroup(
-                    shape_ids=torch.tensor([len(shapes) - 1], device=device),
-                    fill_color=torch.tensor(
-                        [random.random(), random.random(), random.random(), random.random()],
-                        device=device,
-                    ),
-                )
+            if palette is not None:
+                entry, _, _ = palette.entry_for_index(i, canvas_width, canvas_height)
+                rgba = entry.color_rgba
+                stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], device=device)
             else:
-                if palette is not None:
-                    entry, _, _ = palette.entry_for_index(i, canvas_width, canvas_height)
-                    rgba = entry.color_rgba
-                    stroke_color = torch.tensor([rgba[0], rgba[1], rgba[2], rgba[3]], device=device)
-                else:
-                    stroke_color = torch.tensor(
-                        [random.random(), random.random(), random.random(), random.random()],
-                        device=device,
-                    )
-                path_group = pydiffvg.ShapeGroup(
-                    shape_ids=torch.tensor([len(shapes) - 1], device=device),
-                    fill_color=None,
-                    stroke_color=stroke_color,
+                stroke_color = torch.tensor(
+                    [random.random(), random.random(), random.random(), random.random()],
+                    device=device,
                 )
+            path_group = pydiffvg.ShapeGroup(
+                shape_ids=torch.tensor([len(shapes) - 1], device=device),
+                fill_color=None,
+                stroke_color=stroke_color,
+            )
             shape_groups.append(path_group)
 
     persistent_scene = backend == "bezier_gsplat"
@@ -543,19 +516,14 @@ def main(args):
         for path in shapes:
             path.points.requires_grad = True
             points_vars.append(path.points)
-        if not args.use_blob and palette is None:
+        if palette is None:
             for path in shapes:
                 path.stroke_width.requires_grad = True
                 stroke_width_vars.append(path.stroke_width)
-        if args.use_blob:
+        if palette is None:
             for group in shape_groups:
-                group.fill_color.requires_grad = True
-                color_vars.append(group.fill_color)
-        else:
-            if palette is None:
-                for group in shape_groups:
-                    group.stroke_color.requires_grad = True
-                    color_vars.append(group.stroke_color)
+                group.stroke_color.requires_grad = True
+                color_vars.append(group.stroke_color)
 
     # Optimize
     points_optim = torch.optim.Adam(points_vars, lr=1.0)
@@ -595,16 +563,12 @@ def main(args):
                 else:
                     for path in shapes:
                         path.stroke_width.data.clamp_(1.0, max_width)
-            if args.use_blob:
-                for group in shape_groups:
-                    group.fill_color.data.clamp_(0.0, 1.0)
-            else:
-                if palette is None:
-                    if persistent_scene and compiled_scene is not None:
-                        compiled_scene.stroke_rgba_bank.data.clamp_(0.0, 1.0)
-                    else:
-                        for group in shape_groups:
-                            group.stroke_color.data.clamp_(0.0, 1.0)
+            if palette is None:
+                if persistent_scene and compiled_scene is not None:
+                    compiled_scene.stroke_rgba_bank.data.clamp_(0.0, 1.0)
+                else:
+                    for group in shape_groups:
+                        group.stroke_color.data.clamp_(0.0, 1.0)
 
             svg_every = getattr(args, "save_svg_every", 0)
             if (svg_every and svg_every > 0 and (t % svg_every == 0)) or (t == args.num_iter - 1 and svg_every and svg_every > 0):
@@ -743,8 +707,6 @@ def _parse_args() -> argparse.Namespace:
         default=1,
         help="Save PNG every N iters (1 saves every iter, 0 disables)",
     )
-    parser.add_argument("--use-blob", dest="use_blob", action="store_true")
-
     argv = sys.argv[1:]
     known, _ = parser.parse_known_args(argv)
     if known.config:

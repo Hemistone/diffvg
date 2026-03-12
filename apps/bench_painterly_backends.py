@@ -299,8 +299,6 @@ def _build_command(
         cmd.extend(["--config", str(config_path)])
     if palette:
         cmd.extend(["--palette", palette])
-    if args.use_blob:
-        cmd.append("--use-blob")
     if args.plotter_mode is not None:
         cmd.append("--precondition")
         if args.plotter_mode == "lineart":
@@ -509,7 +507,7 @@ def _parse_args() -> argparse.Namespace:
         "--backends",
         type=_parse_csv_list,
         default=[pydiffvg.get_backend()],
-        help="comma-separated backends to benchmark",
+        help="comma-separated backends to benchmark (baseline/splat are legacy comparison paths)",
     )
     parser.add_argument(
         "--path-counts",
@@ -526,7 +524,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--palette", type=str, default=None, help="forwarded to painterly_rendering.py")
     parser.add_argument("--config", type=str, default=None, help="explicit painterly config file")
     parser.add_argument("--precondition", action="store_true", help="use painterly preconditioning config path instead of auto no-precondition config")
-    parser.add_argument("--use-blob", action="store_true", help="forwarded to painterly_rendering.py")
     parser.add_argument("--device", type=str, default="cuda", help="DIFFVG_DEVICE for subprocesses")
     parser.add_argument(
         "--plotter-preset",

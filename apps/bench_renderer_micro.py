@@ -401,7 +401,12 @@ def _spawn_worker(args: argparse.Namespace, backend: str, path_count: int, repor
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backends", type=_parse_backends, default=["bezier_gsplat"])
+    parser.add_argument(
+        "--backends",
+        type=_parse_backends,
+        default=["bezier_gsplat"],
+        help="comma-separated backends to benchmark (baseline/splat are legacy comparison paths)",
+    )
     parser.add_argument("--path-counts", type=_parse_csv_ints, default=[128, 512, 1024])
     parser.add_argument("--width", type=int, default=512)
     parser.add_argument("--height", type=int, default=512)

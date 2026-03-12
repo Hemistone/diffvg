@@ -31,6 +31,10 @@ The maintained mainline path is now a stroke-first compiled renderer:
 Legacy backends still exist in the repo for comparison, but they are no longer
 part of the maintained product path.
 
+This narrowing is also compatible with downstream sketch workflows such as
+ControlSketch/SwiftSketch, whose current diffvg usage is stroke-only
+(`fill_color=None`, open `Path`, constant `stroke_color`).
+
 ## Supported Mainline Scene Features
 
 First-class support in the stroke-first renderer is intentionally narrow:
@@ -83,17 +87,61 @@ Implemented in this phase:
 
 - compiled open-stroke scene IR under `pydiffvg/openstroke/`
 - `bezier_gsplat` serialization now compiles once and reuses live tensor refs
+- global packed parameter banks for points, widths, and colors
 - batched cubic sampling via cached Bernstein bases
 - painterly/precondition/bench flows now default to the stroke-first backend
 - legacy backends gated behind `DIFFVG_ENABLE_LEGACY`
 - renderer-only microbenchmark harness in `apps/bench_renderer_micro.py`
+- one small runtime smoke check in `apps/test_stroke_first_runtime.py`
 
 Still intentionally deferred:
 
 - removal of old exact-renderer code from the tree
 - migration of every legacy sample app
-- global packed parameter bank for eliminating remaining per-iteration tensor packing
+- compiler/round-trip truth checks beyond smoke coverage
+- explicit tree cleanup for dead or now-redundant legacy modules
 - plotter-aware optimization objectives beyond hard palette/width constraints
+
+## Benchmark Snapshot
+
+The packed-bank refactor was the first change that materially removed the old
+DiffVG runtime overhead from iterative painterly optimization.
+
+`flower.jpg`, `64` iterations, `bezier_gsplat`, no precondition:
+
+- previous branch, `512` paths: `141.95s`, loss `0.1271`
+- stroke-first branch, `512` paths: `6.79s`, loss `0.1199`
+- previous branch, `1024` paths: `306.46s`, loss `0.0465`
+- stroke-first branch, `1024` paths: `6.78s`, loss `0.0540`
+
+Interpretation:
+
+- runtime scaling is now effectively flat between `512` and `1024` paths for
+  this workload
+- the largest removed cost was per-iteration scene/object packing, not the
+  `gsplat` kernel itself
+- speed improved enough that cleanup/stabilization now takes priority over
+  another immediate renderer rewrite
+- quality recovery at higher path counts is a follow-up phase, not part of the
+  core runtime reboot milestone
+
+## Stabilization Phase
+
+The next maintained phase is not a feature expansion. It is a cleanup and
+consolidation pass on top of the new runtime.
+
+Priority order:
+
+1. document the narrowed supported feature set and the legacy/modern boundary
+2. remove or quarantine obviously dead runtime paths that duplicate the new
+   open-stroke engine
+3. keep only small validation coverage for invariants that would silently break
+   the new runtime:
+   - compile-once / render-many behavior
+   - optimizer parameter binding to packed banks
+   - SVG export/import round-trip for supported scenes
+   - one app-level smoke benchmark for regression detection
+4. defer optimizer-quality work until the runtime surface is cleaner
 
 ## Benchmark Entry Points
 
