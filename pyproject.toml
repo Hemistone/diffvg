@@ -1,19 +1,19 @@
 [build-system]
 requires = [
-  "scikit-build-core>=0.9",
-  "pybind11>=3.0.1"
+  "setuptools>=68",
+  "wheel"
 ]
-build-backend = "scikit_build_core.build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "diffvg"
 version = "0.2.0"
-description = "Differentiable Vector Graphics rasterizer (PyTorch bindings)"
+description = "Stroke-first raster-to-vector engine built around the bezier_gsplat runtime"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [{ name = "Tzu-Mao Li et al." }]
-keywords = ["graphics", "differentiable", "vector", "rasterizer", "pytorch"]
+keywords = ["graphics", "vector", "rasterizer", "pytorch", "stroke"]
 dependencies = [
   "svgpathtools>=1.4",
   "cssutils>=2.2.0",
@@ -26,16 +26,5 @@ Homepage = "https://github.com/Hemistone/diffvg"
 Repository = "https://github.com/Hemistone/diffvg"
 Issues = "https://github.com/Hemistone/diffvg/issues"
 
-[tool.scikit-build]
-wheel.packages = ["pydiffvg"]
-build.verbose = true
-
-[tool.scikit-build.sdist]
-exclude = [
-  ".venv*",
-  "**/.venv*",
-  "dist",
-  "build",
-  ".git",
-  ".github"
-]
+[tool.setuptools.packages.find]
+include = ["pydiffvg*"]

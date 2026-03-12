@@ -1,8 +1,13 @@
-# Bézier Splatting for Fast and Differentiable Vector Graphics (Notes for modern diffvg)
+# Bézier Splatting for Fast and Differentiable Vector Graphics (notes)
 
-This document summarizes the paper “Bézier Splatting for Fast and Differentiable Vector Graphics Rendering” (arXiv:2503.16424) with the core equations and implementation details relevant to integrating Bézier Splatting into diffvg project.
+This document summarizes the paper “Bézier Splatting for Fast and
+Differentiable Vector Graphics Rendering” (arXiv:2503.16424) with the core
+equations and implementation details that informed the stroke-first
+`bezier_gsplat` runtime in this repository.
 
-> Context: The first revision of this memo targeted the JAX prototype (`jaxdiffvg`) and the Python/Triton renderer (`neo-diffvg`). This updated version describes how the technique maps onto the current C++/CUDA diffvg backend that is surfaced to Python through pybind11.
+> Historical note: older revisions of this memo discussed integrating Bézier
+> Splatting into the old native diffvg renderer. That native exact-renderer path
+> has since been removed from the maintained branch.
 
 ## Overview
 
@@ -95,15 +100,15 @@ Notes:
   - Densify: add new curves in high-error regions (e.g., circle-initialized as in LIVE); match added count to removed to keep total constant.
   - Example settings (from experiments): opacity threshold 0.02; AABB overlap threshold 0.9; apply every ~400 steps; open curves optimized ~15k steps, closed ~10k steps. LR example: color 1e−2, control points 2e−4, opacity 1e−1.
 
-## Implementation Notes for modern diffvg (PyTorch backend)
+## Implementation Notes for the stroke-first runtime
 
-- API parity: keep the public `pydiffvg` surface identical. Route backend selection through `pydiffvg.backend`/`pydiffvg.backends.registry` so callers can opt into Bézier Splatting without touching scene-building code. Respect existing device/dtype handling by allocating tensors on `pydiffvg.get_device()`.
-- Scene serialization: reuse `RenderFunction.serialize_scene` to gather shapes, control points, colors, and stroke widths into contiguous tensors. Once serialized, stay on the PyTorch side (no further calls into the baseline C++ renderer) so the splatting pipeline can run independently.
+- API parity: keep the public `pydiffvg` surface stable. Route backend selection through `pydiffvg.backend` / `pydiffvg.backends.registry` so callers can use Bézier Splatting without touching scene-building code.
+- Scene serialization: reuse `RenderFunction.serialize_scene` to gather shapes, control points, colors, and stroke widths into contiguous tensors. Stay entirely on the PyTorch side.
 - Open strokes: keep diffvg’s poly-Bézier representation; sample t as in (3); derive θ, σ_x, σ_y using (7)(8). Tie σ_y to stroke width and ensure the sampled tensors are laid out segment-major for efficient vectorized math.
 - Closed fills: convert filled paths into paired boundary strips (4)(5)(6). Maintain even-odd fill semantics by constructing strip pairs per subpath and mapping opacity/color exactly as the baseline renderer expects. Preserve SVG round-tripping by keeping serialization outputs unchanged.
 - Splatting kernel: compute per-Gaussian parameters (μ, Σ, c, o, d), bin them into tiles, and alpha-blend per (9)(10). Start with a Torch implementation that works on CPU and CUDA; profile before considering custom kernels (Triton/C++). Keep the kernel behind a feature flag so we can compare against the baseline.
 - Differentiation: wrap the path in a `torch.autograd.Function`. Cache only what is needed for backward (Σ^{-1}, tile coverage, accumulated alpha). Backward should return gradients for control points, stroke width, and colors by chaining through the sampling map. Clamp σ and α in both passes to avoid numerical issues; wire up AMP guards for mixed precision.
-- PyTorch/pybind11 integration: return tensors directly to match existing examples and optimizers. Honor `SceneOptions.seed` by threading the Torch RNG through sampling. When optional C++ kernels arrive, expose them via pybind11 helpers but keep the Python entry point stable so downstream code remains untouched.
+- PyTorch integration: return tensors directly to match existing examples and optimizers. Honor `SceneOptions.seed` by threading the Torch RNG through sampling.
 
 ## Practical Knobs and Defaults
 

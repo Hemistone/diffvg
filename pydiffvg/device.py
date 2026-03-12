@@ -9,7 +9,8 @@ import warnings
 from typing import Optional
 
 import torch
-import diffvg
+
+from .bezier_gsplat.runtime import gsplat_available
 
 
 def _torch_gpu_available() -> bool:
@@ -19,11 +20,8 @@ def _torch_gpu_available() -> bool:
         return False
 
 
-def _cuda_compiled() -> bool:
-    checker = getattr(diffvg, "is_cuda_compiled", None)
-    if checker is None:
-        return False
-    return bool(checker())
+def _cuda_backend_available() -> bool:
+    return _torch_gpu_available() and gsplat_available()
 
 
 def _default_use_gpu() -> bool:
@@ -31,12 +29,12 @@ def _default_use_gpu() -> bool:
     if device_env == "cpu":
         return False
     if device_env == "cuda":
-        return _torch_gpu_available() and _cuda_compiled()
+        return _cuda_backend_available()
     if os.environ.get("DIFFVG_FORCE_CPU", "").strip() not in ("", "0", "false", "False"):
         return False
     if os.environ.get("DIFFVG_FORCE_GPU", "").strip() not in ("", "0", "false", "False"):
-        return _torch_gpu_available() and _cuda_compiled()
-    return _torch_gpu_available() and _cuda_compiled()
+        return _cuda_backend_available()
+    return _cuda_backend_available()
 
 
 def _initial_device() -> torch.device:
@@ -47,10 +45,10 @@ def _initial_device() -> torch.device:
         except Exception:
             target = torch.device("cuda" if device_env.startswith("cuda") else "cpu")
         if target.type == "cuda":
-            if _cuda_compiled() and _torch_gpu_available():
+            if _cuda_backend_available():
                 return target
             warnings.warn(
-                "DIFFVG_DEVICE requested CUDA but CUDA is unavailable; using CPU instead.",
+                "DIFFVG_DEVICE requested CUDA but the stroke-first runtime is unavailable; using CPU instead.",
                 RuntimeWarning,
             )
             return torch.device("cpu")
@@ -65,11 +63,11 @@ def set_use_gpu(v: bool) -> None:
     global use_gpu
     global device
     requested = bool(v)
-    if requested and not _cuda_compiled():
-        warnings.warn("diffvg was built without CUDA support; falling back to CPU.", RuntimeWarning)
-        requested = False
-    if requested and not _torch_gpu_available():
-        warnings.warn("PyTorch reports no CUDA device; falling back to CPU.", RuntimeWarning)
+    if requested and not _cuda_backend_available():
+        warnings.warn(
+            "CUDA rendering requires a CUDA-capable PyTorch install and the optional 'gsplat' package; falling back to CPU.",
+            RuntimeWarning,
+        )
         requested = False
     use_gpu = requested
     device = torch.device('cuda') if use_gpu else torch.device('cpu')
@@ -83,13 +81,11 @@ def set_device(d: torch.device | str) -> None:
     global use_gpu
     target = torch.device(d)
     if target.type == 'cuda':
-        if not _cuda_compiled():
-            warnings.warn("diffvg was built without CUDA support; keeping CPU device.", RuntimeWarning)
-            device = torch.device('cpu')
-            use_gpu = False
-            return
-        if not _torch_gpu_available():
-            warnings.warn("PyTorch reports no CUDA device; keeping CPU device.", RuntimeWarning)
+        if not _cuda_backend_available():
+            warnings.warn(
+                "CUDA rendering requires a CUDA-capable PyTorch install and the optional 'gsplat' package; keeping CPU device.",
+                RuntimeWarning,
+            )
             device = torch.device('cpu')
             use_gpu = False
             return

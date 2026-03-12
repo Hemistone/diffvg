@@ -3,7 +3,6 @@
 import torch
 import xml.etree.ElementTree as etree
 import numpy as np
-import diffvg
 import os
 import pydiffvg
 import svgpathtools

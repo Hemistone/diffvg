@@ -5,7 +5,7 @@
 # - Pins are set as compatible ranges to work across Linux/macOS with Python 3.12.
 # - This file targets the library runtime. Example apps/dev extras are listed at
 #   the bottom as commented lines; uncomment as needed.
-# - For build-time tools (wheel, scikit-build-core, cmake, etc.), see
+# - For build-time helpers (wheel, setuptools, etc.), see
 #   `requirements-build.txt` and the `[build-system]` section in `pyproject.toml`.
 
 # Core runtime deps (from pyproject/poetry.lock, modernized for Py3.12)
