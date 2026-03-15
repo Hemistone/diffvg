@@ -1,6 +1,10 @@
-# Flowline Preconditioning Mode — Draft Spec
+# Flowline Preconditioning Mode
 
-**Status:** prototype implemented (2026-01-13)
+**Status:** research / prototype note
+
+This is a research note for a future preconditioning path. It should be read in
+the context of the current stroke-first runtime, not the removed legacy
+backends.
 
 This document proposes a **Flowline** preconditioning mode that generates long, coherent stroke paths by tracing along an orientation field derived from the image. The goal is to avoid skeleton-based "bubble" artifacts and produce painterly, pen-plotter-friendly strokes.
 
@@ -11,7 +15,8 @@ This document proposes a **Flowline** preconditioning mode that generates long, 
 - Produce **long, coherent strokes** with consistent directionality.
 - Reduce reliance on skeletonization, which tends to create short, fragmented polylines.
 - Stay CPU-friendly by default; allow optional GPU acceleration for parts that benefit.
-- Preserve compatibility with **splat backend constraints** (open paths, scalar stroke width, identity transform).
+- Preserve compatibility with the **current stroke-first backend constraints**
+  (open paths, scalar stroke width, identity transform).
 
 ---
 
@@ -128,7 +133,7 @@ for seed in seeds_sorted:
 3. Update `init_paths.py` to branch:
    - if `cfg.mode == "flowline"` → use flowline module → polylines → paths
 4. Add CLI flags in `apps/painterly_rendering.py` and `apps/precondition_vectorize.py`.
-5. Add preset under `configs/precondition/flowline.toml` (baseline settings).
+5. Add preset under `configs/precondition/flowline.toml` (starter settings).
 
 ---
 

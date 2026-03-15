@@ -1,162 +1,100 @@
 # Stroke-First Reboot
 
-This document records the architectural change made after the initial
-`bezier_gsplat` integration work.
+This document records the architectural reset that turned the repo from a
+legacy diffvg fork into a stroke-first runtime.
 
-## Why The Old Integration Was Not Enough
+## Why The Reboot Happened
 
-The first `bezier_gsplat` backend proved that `gsplat` could be wired into the
-repo and used inside `painterly_rendering.py`, but it kept too much of the old
-DiffVG runtime structure alive:
+The first `bezier_gsplat` integration proved that `gsplat` could be wired into
+the repo, but it kept too much of the old runtime shape alive:
 
-- scene serialization was still rebuilt around generic path/group payloads
-- hot-path rendering still paid for Python object traversal and per-segment
-  reconstruction
-- the renderer still behaved like a generic diffvg adapter instead of a packed
-  open-stroke engine
+- generic scene serialization every iteration
+- Python object traversal in the hot path
+- per-iteration repacking costs that hid the actual renderer gains
 
-That structure was good enough to validate convergence and app compatibility,
-but it was not faithful to the performance-critical design of the original
-Bezier Splatting codebase.
+That version was enough to validate convergence, but not enough to justify the
+repo’s long-term direction.
 
-## Current Direction
+## The New Runtime Boundary
 
-The maintained mainline path is now a stroke-first compiled renderer:
+The maintained runtime is now:
 
-- public Python scene objects stay diffvg-like (`Path`, `ShapeGroup`, SVG I/O)
-- the maintained runtime backend is `bezier_gsplat`
-- the internal hot path compiles supported scenes into a packed open-stroke IR
-- rendering is performed from this compiled representation with `gsplat`
+- stroke-only
+- open-path focused
+- compiled once, rendered many times
+- backed by `bezier_gsplat`
 
-The older `baseline` and `splat` backends have now been removed from the
-maintained tree. The repo no longer carries dual runtime paths.
+The maintained frontend remains diffvg-like:
 
-Saved artifacts are now interpreted asymmetrically:
+- `Path`, `Polygon`, `ShapeGroup`
+- `RenderFunction`, `Renderer`
+- `save_svg`
+- optional SVG parsing utilities
 
-- `final_splatted.png`: direct renderer output used for internal debugging
-- `final.svg`: canonical vector output
+But the internal execution path is no longer the old diffvg renderer.
+
+## Main Architectural Changes
+
+### 1. Compiled open-stroke scene IR
+
+Supported scenes are normalized into a packed internal representation under
+`pydiffvg/openstroke/`.
+
+Key ideas:
+
+- fixed hot-path primitive: cubic stroke chunks
+- compile once per topology
+- keep parameter banks packed across iterations
+- render directly from the compiled representation
+
+### 2. `bezier_gsplat` as the only runtime backend
+
+Legacy `baseline` and `splat` backends have been removed from the maintained
+tree.
+
+This repo now assumes:
+
+- open-stroke workloads are the product path
+- time-to-quality matters more than exact legacy parity
+- old runtime branches are maintenance debt
+
+### 3. SVG promoted to canonical output
+
+Painterly artifacts now mean:
+
+- `final_splatted.png`: internal renderer output
+- `final.svg`: canonical vector artifact
 - `final.png`: preview rasterized back from `final.svg`
 
-This makes SVG export fidelity part of the mainline product path rather than a
-secondary debugging aid.
+This changed SVG export from a side utility into a core product step.
 
-This narrowing is also compatible with downstream sketch workflows such as
-ControlSketch/SwiftSketch, whose current diffvg usage is stroke-only
-(`fill_color=None`, open `Path`, constant `stroke_color`).
+## What Was Removed
 
-## Supported Mainline Scene Features
+The reboot intentionally removed:
 
-First-class support in the stroke-first renderer is intentionally narrow:
+- native diffvg C++/CUDA renderer code
+- legacy runtime backends
+- fill/SDF demo paths from the maintained surface
+- dual-path runtime complexity
 
-- open `Path` / open `Polygon`
-- constant RGBA stroke colors
-- scalar stroke widths
-- identity `shape_to_canvas`
-- `OutputType.color`
-- line / quadratic / cubic segments, compiled into a fixed 3-segment cubic IR
+## What Still Needs Work
 
-Unsupported features are expected to fail explicitly instead of silently
-falling back.
+The reboot solved architecture and runtime shape first.
+It did **not** solve everything.
 
-## Internal Representation
+The next layer of work is:
 
-The new compiled scene path normalizes frontend shapes into a fixed hot-path
-layout:
+1. quality stabilization for `bezier_gsplat`
+2. SVG fidelity and export robustness
+3. upstream NN integration and better initialization
+4. plotter-aware postprocess and export
 
-- internal primitive: fixed 3-segment cubic stroke
-- shorter paths are padded and masked
-- longer paths are split into multiple internal strokes
-- line and quadratic segments are degree-elevated to cubic
-- rendering samples are generated from cached Bernstein bases
-
-This keeps the frontend flexible enough for SVG import/export while ensuring the
-renderer sees a stable tensor layout.
-
-## Runtime Behavior
-
-`pydiffvg.Renderer.serialize_scene()` still returns a tuple that can be passed
-unchanged into `Renderer.apply(...)`, so existing app-level calling conventions
-remain intact.
-
-For `bezier_gsplat`, that tuple now starts with a compiled scene object rather
-than a legacy flat diffvg argument payload.
-
-## Current Implementation Scope
-
-Implemented in this phase:
-
-- compiled open-stroke scene IR under `pydiffvg/openstroke/`
-- `bezier_gsplat` serialization now compiles once and reuses live tensor refs
-- global packed parameter banks for points, widths, and colors
-- batched cubic sampling via cached Bernstein bases
-- painterly/precondition/bench flows now default to the stroke-first backend
-- legacy backends and their runtime modules removed from the mainline tree
-- renderer-only microbenchmark harness in `apps/bench_renderer_micro.py`
-- one small runtime smoke check in `apps/test_stroke_first_runtime.py`
-
-Still intentionally deferred:
-
-- cleanup of remaining historical docs that still mention removed backends
-- compiler/round-trip truth checks beyond smoke coverage
-- plotter-aware optimization objectives beyond hard palette/width constraints
-
-## Benchmark Snapshot
-
-The packed-bank refactor was the first change that materially removed the old
-DiffVG runtime overhead from iterative painterly optimization.
-
-`flower.jpg`, `64` iterations, `bezier_gsplat`, no precondition:
-
-- previous branch, `512` paths: `141.95s`, loss `0.1271`
-- stroke-first branch, `512` paths: `6.79s`, loss `0.1199`
-- previous branch, `1024` paths: `306.46s`, loss `0.0465`
-- stroke-first branch, `1024` paths: `6.78s`, loss `0.0540`
-
-Interpretation:
-
-- runtime scaling is now effectively flat between `512` and `1024` paths for
-  this workload
-- the largest removed cost was per-iteration scene/object packing, not the
-  `gsplat` kernel itself
-- speed improved enough that cleanup/stabilization now takes priority over
-  another immediate renderer rewrite
-- quality recovery at higher path counts is a follow-up phase, not part of the
-  core runtime reboot milestone
-
-## Stabilization Phase
-
-The next maintained phase is not a feature expansion. It is a cleanup and
-consolidation pass on top of the new runtime.
-
-Priority order:
-
-1. document the narrowed supported feature set and the legacy/modern boundary
-2. remove or quarantine obviously dead runtime paths that duplicate the new
-   open-stroke engine
-3. keep only small validation coverage for invariants that would silently break
-   the new runtime:
-   - compile-once / render-many behavior
-   - optimizer parameter binding to packed banks
-   - SVG export/import round-trip for supported scenes
-   - one app-level smoke benchmark for regression detection
-4. defer optimizer-quality work until the runtime surface is cleaner
-
-## Benchmark Entry Points
-
-- App-level painterly benchmark: `apps/bench_painterly_backends.py`
-- Renderer-only microbenchmark: `apps/bench_renderer_micro.py`
-
-The microbenchmark is the preferred tool for separating compile, forward,
-backward, and one-step timing from app-level logging, SVG, and loss-pipeline
-overhead.
-
-## Files To Start From
+## File Landmarks
 
 - `pydiffvg/openstroke/compiler.py`
 - `pydiffvg/openstroke/renderer.py`
 - `pydiffvg/render_bezier_gsplat.py`
-- `pydiffvg/backend.py`
-- `pydiffvg/backends/registry.py`
+- `pydiffvg/render_function.py`
 - `apps/painterly_rendering.py`
-- `apps/bench_painterly_backends.py`
 - `apps/bench_renderer_micro.py`
+- `apps/test_stroke_first_runtime.py`

@@ -17,8 +17,10 @@ Final painterly artifacts:
 - `final.png`: preview rasterized back from `final.svg` on a white background
 
 See:
+- [`docs/project_context.md`](docs/project_context.md)
 - [`docs/stroke_first_reboot.md`](docs/stroke_first_reboot.md)
 - [`docs/plotter_workflow_context.md`](docs/plotter_workflow_context.md)
+- [`docs/bezier_splatting.md`](docs/bezier_splatting.md)
 
 ## Install
 

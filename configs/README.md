@@ -23,7 +23,7 @@ python apps/painterly_rendering.py --config configs/precondition/teed.toml imgs/
 ```
 
 Note: `apps/painterly_rendering.py` defaults to
-`configs/precondition/teed_detail_quantile.toml` when `--config` is omitted.
+pure random-init stroke optimization when `--config` is omitted.
 
 Lineart preconditioning (painterly):
 
@@ -62,7 +62,7 @@ python apps/precondition_vectorize.py --config configs/precondition/teed.toml im
 ```
 
 Note: `apps/precondition_vectorize.py` defaults to
-`configs/precondition/teed_detail_quantile.toml` when `--config` is omitted.
+its built-in CLI defaults when `--config` is omitted.
 
 Lineart preconditioning (precondition-only):
 
@@ -96,7 +96,7 @@ python apps/precondition_vectorize.py --config configs/precondition/lineart_plot
 
 ## Presets
 
-- `precondition/teed.toml`: baseline TEED defaults for shared preconditioning.
+- `precondition/teed.toml`: TEED defaults for shared preconditioning.
 - `precondition/teed_detail.toml`: higher detect resolution, lower threshold, longer paths.
 - `precondition/teed_detail_quantile.toml`: detail preset using quantile thresholding.
 - `precondition/teed_detail_otsu.toml`: detail preset using Otsu thresholding.

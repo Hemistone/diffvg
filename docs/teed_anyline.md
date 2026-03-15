@@ -1,5 +1,11 @@
 ## TEED / Anyline(MistoLine) 기반 preconditioning 조사 노트
 
+상태:
+
+* 이 문서는 preconditioning 연구 메모다.
+* 해석 기준은 현재의 **stroke-first `bezier_gsplat` runtime**이다.
+* 제거된 legacy `baseline` / old `splat` backend를 전제로 읽으면 안 된다.
+
 이 문서는 DiffVG preconditioning(초기 stroke 배치) 품질을 높이기 위해, 전통적 edge detector(XDoG/Canny 등) 대신 **NN 기반 edge/outline 추출기**를 도입하는 방안으로서 **TEED**와 SDXL 생태계의 **Anyline(MistoLine)**을 조사한 기록이다.
 
 핵심 요약:
@@ -7,7 +13,7 @@
 * **TEED**는 58K 파라미터 수준의 매우 작은 CNN edge detector로, 일반적인 사진에서 “사람이 기대하는 윤곽선”을 비교적 깔끔하게 뽑아내는 편이다.
 * SDXL/ComfyUI에서 말하는 **Anyline**은 보통 “TEED 계열(edge) + lineart intensity 기반 보강”을 합친 **프리프로세서 파이프라인**이며, 실제 배포 가중치로는 `MTEED.pth`가 많이 쓰인다.
 * 우리 프로젝트 관점에서는 “preconditioning의 `edge_mask` 생성기만 교체”하면 되므로, 구조적으로 도입이 쉽다.
-* 다만, “어떤 가중치를 기본으로 지원할지(라이선스)”와 “splat backend 제약(폐곡선 stroke)”을 같이 고려해야 한다.
+* 다만, “어떤 가중치를 기본으로 지원할지(라이선스)”와 “current stroke-first backend 제약(폐곡선 stroke)”을 같이 고려해야 한다.
 
 ---
 
@@ -90,18 +96,18 @@ TEED/Anyline 도입은 대부분 “edge_mask 생성기 교체”로 끝난다. 
 2. `pydiffvg/precondition/init_paths.py:build_preconditioned_scene()`에서 `cfg`에 따라 edge backend 선택
 3. TEED/Anyline이 주는 grayscale edge map(0~1 또는 0~255)을 **bool edge_mask로 thresholding** + morphology 정리
 
-### 4.1 splat backend 제약과의 상호작용(중요)
+### 4.1 current stroke-first backend 제약과의 상호작용(중요)
 
-skeleton 기반 vectorize 과정에서 loop가 많아지면 폐곡선 path가 만들어질 수 있는데, splat backend는 “closed path에 stroke”를 지원하지 않는다.
+skeleton 기반 vectorize 과정에서 loop가 많아지면 폐곡선 path가 만들어질 수 있는데, current stroke-first backend는 “closed path에 stroke”를 지원하지 않는다.
 
 따라서 TEED/Anyline처럼 윤곽이 잘 잡히는 edge detector를 붙이면, 오히려 loop가 늘어나서 splat fallback이 발생할 수 있다.
 
 대응 전략(선택지):
 
-* “splat 사용 시” preconditioning 단계에서 path를 **강제로 open curve로 만들기**(loop cut 또는 `is_closed=False` 강제)
+* preconditioning 단계에서 path를 **강제로 open curve로 만들기**(loop cut 또는 `is_closed=False` 강제)
 * loop는 fill로만 쓰고 stroke는 open curve만 쓰도록 정책 분리(추가 구현 필요)
 
-현재는 `precond_force_open_paths` 옵션으로 closed stroke를 강제로 열도록 지원하며, splat backend에서는 자동으로 활성화된다.
+현재는 `precond_force_open_paths` 옵션으로 closed stroke를 강제로 열도록 지원한다.
 
 ---
 
@@ -139,7 +145,7 @@ Anyline을 “바로 통째로” 붙이기보다, 아래 순서로 가는 편�
   * preconditioning init render의 구조적 유사도(초기 loss)
   * 목표 “iteration 감소”가 실제로 발생하는지(예: 500 → 150~200)
   * path 수/길이 분포가 skeleton graph에 어떻게 영향을 주는지
-  * splat fallback 비율(unsupported path 비율)이 늘지는 않는지
+  * current runtime에서 unsupported path 비율이 늘지는 않는지
 * TEED threshold mode:
   * `fixed`: 기존처럼 단일 threshold로 edge mask 생성
   * `hysteresis`: high/low threshold를 사용해 연결된 약한 edge를 보존
