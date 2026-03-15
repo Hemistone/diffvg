@@ -87,4 +87,4 @@ Do not reintroduce the following as maintained-surface goals:
 - keeping dead backends or docs around "just in case"
 
 If a historical idea is worth preserving, keep it as a research note under
-`docs/`, not as a maintained code path.
+`docs/research/`, not as a maintained code path.

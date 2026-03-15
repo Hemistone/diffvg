@@ -20,7 +20,10 @@ See:
 - [`docs/project_context.md`](docs/project_context.md)
 - [`docs/stroke_first_reboot.md`](docs/stroke_first_reboot.md)
 - [`docs/plotter_workflow_context.md`](docs/plotter_workflow_context.md)
-- [`docs/bezier_splatting.md`](docs/bezier_splatting.md)
+
+Research notes:
+- [`docs/research/README.md`](docs/research/README.md)
+- [`docs/research/bezier_splatting.md`](docs/research/bezier_splatting.md)
 
 ## Install
 
