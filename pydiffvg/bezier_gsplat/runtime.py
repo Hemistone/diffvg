@@ -30,10 +30,10 @@ def _missing_dependency_error(exc: Exception) -> RuntimeError:
 @lru_cache(maxsize=1)
 def load_gsplat_ops() -> GsplatOps:
     try:
-        from gsplat.project_gaussians_2d_scale_rot import (
+        from gsplat import (
             project_gaussians_2d_scale_rot,
+            rasterize_gaussians,
         )
-        from gsplat.rasterize import rasterize_gaussians
     except Exception as exc:  # pragma: no cover - optional dependency
         raise _missing_dependency_error(exc)
     return GsplatOps(

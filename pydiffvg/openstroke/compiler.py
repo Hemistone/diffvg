@@ -150,15 +150,15 @@ def compile_scene(
                 raise OpenStrokeUnsupported("only open Path/Polygon shapes are supported")
             points = _path_points(shape)
             stroke_width = _scalar_width(shape)
-            point_tensor = points.detach().clone().to(device=target_device, dtype=torch.float32).contiguous()
+            point_tensor = points.to(device=target_device, dtype=torch.float32).contiguous()
             start = point_offset
             end = start + int(point_tensor.shape[0])
             point_chunks.append(point_tensor)
             style_index = len(style_refs)
             shape_refs.append(ShapeRef(shape=shape, start=start, end=end, index=style_index))
             style_refs.append(StyleRef(group=group, index=style_index))
-            width_values.append(stroke_width.detach().clone().to(device=target_device, dtype=torch.float32).reshape(()))
-            color_values.append(stroke_rgba.detach().clone().to(device=target_device, dtype=torch.float32).reshape(4))
+            width_values.append(stroke_width.to(device=target_device, dtype=torch.float32).reshape(()))
+            color_values.append(stroke_rgba.to(device=target_device, dtype=torch.float32).reshape(4))
             segments = _segment_descriptors(shape, point_offset)
             point_offset = end
             if not segments:
