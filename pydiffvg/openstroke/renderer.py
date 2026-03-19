@@ -70,6 +70,26 @@ def _project_with_safe_tile_budget(
         block_w = min(width, block_w * 2)
 
 
+class ProjectToNormal(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, positions, tangents):
+        ctx.save_for_backward(tangents)
+        return positions
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        tangents, = ctx.saved_tensors
+        # Normalized tangent vector: t
+        t_norm = torch.linalg.norm(tangents, dim=-1, keepdim=True).clamp_min(1e-6)
+        t = tangents / t_norm
+        
+        # Remove the tangent component from the gradient: grad_output - dot(grad, t) * t
+        tangent_component = (grad_output * t).sum(dim=-1, keepdim=True) * t
+        projected_grad = grad_output - tangent_component
+
+        return projected_grad, None
+
+
 def _normalize_means_to_ndc(means_px: torch.Tensor, width: int, height: int) -> torch.Tensor:
     scale = means_px.new_tensor([2.0 / float(max(width, 1)), 2.0 / float(max(height, 1))])
     bias = means_px.new_tensor([-1.0, -1.0])
@@ -108,6 +128,10 @@ def render_compiled_scene(
     basis, deriv_basis = _basis_on(device, dtype, int(config.samples_per_segment))
     positions = torch.einsum("sf,nkfc->nksc", basis, cubic_controls)
     tangents = torch.einsum("sf,nkfc->nksc", deriv_basis, cubic_controls)
+
+    import os
+    if os.environ.get("DIFFVG_PROJECT_GRADIENTS", "1") == "1":
+        positions = ProjectToNormal.apply(positions, tangents)
 
     sample_mask = scene.segment_mask[:, :, None].expand(-1, -1, basis.shape[0]).reshape(scene.stroke_count, -1)
     flat_positions = positions.reshape(scene.stroke_count, -1, 2)
